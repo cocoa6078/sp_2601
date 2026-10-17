@@ -18,6 +18,7 @@ import Foundation
 import Combine
 import Charts
 import MapKit
+import AVFoundation
 
 // MARK: - 基本の型
 
@@ -34,7 +35,7 @@ enum WatchConnectionState: Equatable {
         case .notConnected: return "未接続"
         case .notPaired: return "iPhoneと未ペアリング"
         case .watchAppNotInstalled: return "Watchアプリ未インストール"
-        case .waitingForReachability: return "Watchアプリを開いてください"
+        case .waitingForReachability: return "アプリ起動待ち"
         case .connected: return "接続中"
         }
     }
@@ -114,6 +115,8 @@ protocol WatchLink: AnyObject {
     func workoutDidStart(sessionID: UUID, activityMode: ActivityMode)
     func workoutDidPause()
     func workoutDidResume()
+    func workoutDidReachGoal(distanceToGoal: Double)
+    func workoutDidContinueAfterGoal()
     func workoutDidEnd(elapsed: TimeInterval, distance: Double?, averageCadence: Int?, activityMode: ActivityMode)
 }
 
@@ -134,6 +137,8 @@ final class NoWatchLink: WatchLink {
     func workoutDidStart(sessionID: UUID, activityMode: ActivityMode) {}
     func workoutDidPause() {}
     func workoutDidResume() {}
+    func workoutDidReachGoal(distanceToGoal: Double) {}
+    func workoutDidContinueAfterGoal() {}
     func workoutDidEnd(elapsed: TimeInterval, distance: Double?, averageCadence: Int?, activityMode: ActivityMode) {}
 }
 
@@ -250,12 +255,17 @@ final class SessionStore: ObservableObject {
     @Published private(set) var outputSettings = TempoOutputSettings.load()
     @Published private(set) var outputSyncMessage = "Watch接続時に設定を反映します"
     @Published private(set) var goal: GoalPoint?
+    @Published private(set) var showGoalApproach = false
+    @Published private(set) var goalApproachDistanceM = 20.0
     @Published private(set) var goalSetupRequested = false
     @Published private(set) var goalSetupActivityMode: ActivityMode?
     /// 最後に受け取った信号情報。nil は未受信。iPhone では色を計算しない。
     @Published private(set) var latestSignal: SignalInfo?
     let routeTracker = WorkoutRouteTracker()
     private let iphoneTempoOutputPlayer = IPhoneTempoOutputPlayer()
+    private let goalSpeechSynthesizer = AVSpeechSynthesizer()
+    private let goalAudioSession = AVAudioSession.sharedInstance()
+    private var goalApproachPresentedThisSession = false
 
     // MARK: 経過時間（iPhone の時計で積算。一時停止中は増えない）
     private var accumulated: TimeInterval = 0
@@ -508,10 +518,13 @@ final class SessionStore: ObservableObject {
         accumulated = 0
         runStartedAt = Date()
         summary = nil
+        showGoalApproach = false
+        goalApproachPresentedThisSession = false
         resetMetrics()
         resetSignal()
         workoutState = .running
         screen = .session
+        routeTracker.goal = goal
         updateIPhoneTempoOutput()
         routeTracker.start()
         link.updateOutputSettings(outputSettings)
@@ -564,12 +577,47 @@ final class SessionStore: ObservableObject {
         ), at: 0)
         WorkoutRecord.save(workoutRecords)
         screen = .result
+        showGoalApproach = false
         link.workoutDidEnd(
             elapsed: summary?.elapsed ?? accumulated,
             distance: summary?.distance,
             averageCadence: summary?.averageCadence,
             activityMode: activityMode
         )
+    }
+
+    /// ゴールまで20m以内に入ったとき、セッション中に一度だけ音声と案内画面を出す。
+    func checkGoalApproach(_ distance: Double?) {
+        guard workoutState == .running,
+              !goalApproachPresentedThisSession,
+              let distance, distance.isFinite, distance <= 20 else { return }
+        goalApproachPresentedThisSession = true
+        goalApproachDistanceM = max(0, distance)
+        showGoalApproach = true
+        link.workoutDidReachGoal(distanceToGoal: goalApproachDistanceM)
+        announceGoal()
+    }
+
+    func dismissGoalApproach() {
+        guard showGoalApproach else { return }
+        showGoalApproach = false
+        if workoutState == .running { link.workoutDidContinueAfterGoal() }
+    }
+
+    private func announceGoal() {
+        // mixWithOthers keeps the user's music playing under the spoken goal cue.
+        try? goalAudioSession.setCategory(.playback, mode: .spokenAudio, options: [.mixWithOthers])
+        try? goalAudioSession.setActive(true)
+        let utterance = AVSpeechUtterance(string: "ゴール")
+        utterance.voice = AVSpeechSynthesisVoice(language: "ja-JP")
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        goalSpeechSynthesizer.speak(utterance)
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard let self else { return }
+            // Restore the tempo player's non-interrupting audio policy after the short cue.
+            try? self.goalAudioSession.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
+        }
     }
 
     /// 結果画面からホームへ戻る。
@@ -743,12 +791,22 @@ private struct CompactConnectionStatus: View {
     var body: some View {
         HStack(spacing: 5) {
             Circle().fill(color).frame(width: 7, height: 7)
-            Text(state == .connected ? "Watch接続中" : "Watch \(state.label)")
+            Text(statusText)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
         .accessibilityElement(children: .combine)
+    }
+
+    private var statusText: String {
+        switch state {
+        case .connected: "Watch 接続中"
+        case .waitingForReachability: "Watch アプリ起動待ち"
+        case .watchAppNotInstalled: "Watch アプリ未インストール"
+        case .notPaired: "Watch 未ペアリング"
+        case .notConnected: "Watch 未接続"
+        }
     }
 }
 
@@ -847,15 +905,26 @@ private struct HomeView: View {
     @ObservedObject var store: SessionStore
     @ObservedObject var calibration: StrideCalibrationManager
     @State private var showGoalMap = false
+    @StateObject private var currentLocation = CurrentLocationObserver()
 
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("RUNWAVE")
-                        .font(.system(size: 36, weight: .heavy, design: .rounded))
-                    Spacer()
-                    CompactConnectionStatus(state: store.connectionState)
+                HStack(spacing: 14) {
+                    Image("RunwaveLogo")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 88, height: 56)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Image("RunwaveWordmark")
+                            .resizable()
+                            .renderingMode(.template)
+                            .scaledToFit()
+                            .foregroundStyle(.primary)
+                            .frame(width: 155, height: 25, alignment: .leading)
+                        CompactConnectionStatus(state: store.connectionState)
+                    }
+                    Spacer(minLength: 0)
                 }
                 .padding(.top, 24)
 
@@ -885,13 +954,6 @@ private struct HomeView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(20)
                 .background(CardBackground())
-
-                if store.connectionState != .connected {
-                    Text("Watch：\(store.connectionState.label)。WatchでRUNWAVEを開いてください。")
-                        .font(.footnote)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                }
 
                 #if DEBUG
                 demoToggle
@@ -957,8 +1019,10 @@ private struct HomeView: View {
             if requested { showGoalMap = true }
         }
         .onAppear {
+            currentLocation.start()
             if store.goalSetupRequested { showGoalMap = true }
         }
+        .onDisappear { currentLocation.stop() }
     }
 
     /// 終了地点カード（必須項目）。
@@ -968,16 +1032,26 @@ private struct HomeView: View {
                 .font(.subheadline)
                 .foregroundColor(.secondary)
 
+            GoalPreviewMap(goal: store.goal, currentLocation: currentLocation.coordinate)
+                .frame(height: 140)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            if currentLocation.coordinate == nil {
+                Label(
+                    currentLocation.isDenied ? "位置情報を許可すると現在地を表示します" : "現在地を取得中",
+                    systemImage: "location"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
             if let goal = store.goal {
-                GoalPreviewMap(goal: goal)
-                    .frame(height: 140)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 Text(goal.coordinateText)
                     .font(.footnote)
                     .monospacedDigit()
                     .foregroundColor(.secondary)
             } else {
-                Text("未設定：開始前に地図で設定してください")
+                Text(currentLocation.coordinate == nil ? "現在地を取得中・終了地点は未設定です" : "終了地点は未設定です")
                     .font(.subheadline.bold())
                     .foregroundColor(.secondary)
             }
@@ -1028,7 +1102,7 @@ private struct StrideCalibrationCard: View {
             Label("\(mode.label)の歩幅", systemImage: mode.icon).font(.headline)
             if calibration.isMeasuring && calibration.measuringMode == mode {
                 HStack(spacing: 12) {
-                    measurementValue("距離", value: String(format: "%.0f m", calibration.distanceM))
+                    measurementValue("距離", value: String(format: "%.1f m", calibration.distanceM))
                     measurementValue("歩数", value: "\(calibration.steps) 歩")
                     measurementValue("時間", value: elapsedText)
                 }
@@ -1132,6 +1206,14 @@ private struct SettingsView: View {
 }
 
 private struct RecordsView: View {
+    fileprivate static let rowDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy/MM/dd HH:mm"
+        return formatter
+    }()
+
     @ObservedObject var store: SessionStore
     @State private var showClearConfirmation = false
     @State private var editMode: EditMode = .inactive
@@ -1208,9 +1290,11 @@ private struct RecordsView: View {
                     .font(.headline)
                 if record.isDemo { DemoBadge() }
                 Spacer()
-                Text(record.date.formatted(date: .abbreviated, time: .shortened))
+                Text(Self.rowDateFormatter.string(from: record.date))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
             }
             HStack(spacing: 14) {
                 Label(formatElapsed(record.elapsed), systemImage: "clock")
@@ -1244,7 +1328,7 @@ private struct WorkoutRecordDetailView: View {
                     if record.isDemo { DemoBadge() }
                     Spacer()
                 }
-                Text(record.date.formatted(date: .long, time: .shortened))
+                Text(RecordsView.rowDateFormatter.string(from: record.date))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
 
@@ -1306,12 +1390,12 @@ private struct WorkoutRecordDetailView: View {
     }
 
     private func metric(_ title: String, _ value: String, icon: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 5) {
             Label(title, systemImage: icon).font(.caption).foregroundStyle(.secondary)
             Text(value).font(.title3.bold().monospacedDigit()).lineLimit(1).minimumScaleFactor(0.75)
         }
-        .frame(maxWidth: .infinity, minHeight: 78, alignment: .leading)
-        .padding(14)
+        .frame(maxWidth: .infinity, minHeight: 66, alignment: .leading)
+        .padding(10)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 }
@@ -1502,6 +1586,15 @@ private struct SessionView: View {
         } message: {
             Text("終了すると結果画面に移動します。")
         }
+        .onChange(of: routeTracker.distanceToGoalM) { _, distance in
+            store.checkGoalApproach(distance)
+        }
+        .fullScreenCover(isPresented: Binding(
+            get: { store.showGoalApproach },
+            set: { if !$0 { store.dismissGoalApproach() } }
+        )) {
+            GoalApproachView(store: store)
+        }
     }
 
     private var stateColor: Color {
@@ -1556,6 +1649,63 @@ private struct SessionView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .background(.ultraThinMaterial)
+    }
+}
+
+private struct GoalApproachView: View {
+    @ObservedObject var store: SessionStore
+
+    var body: some View {
+        VStack(spacing: 24) {
+            Spacer()
+            Image(systemName: "flag.checkered")
+                .font(.system(size: 76, weight: .medium))
+                .foregroundStyle(.green)
+                .accessibilityHidden(true)
+
+            VStack(spacing: 8) {
+                Text("ゴール")
+                    .font(.system(size: 42, weight: .heavy, design: .rounded))
+                Text("ゴールまで約\(Int(store.goalApproachDistanceM.rounded()))mです")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+
+            Spacer()
+            VStack(spacing: 12) {
+                Button {
+                    store.end()
+                } label: {
+                    Text("ゴールして終了")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .tint(.green)
+
+                Button("走り続ける") {
+                    store.dismissGoalApproach()
+                }
+                .font(.headline)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+            }
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background {
+            LinearGradient(
+                colors: [Color.green.opacity(0.12), Color(uiColor: .systemBackground)],
+                startPoint: .top,
+                endPoint: .bottom
+            ).ignoresSafeArea()
+        }
+        .interactiveDismissDisabled()
     }
 }
 

@@ -32,6 +32,7 @@ struct WorkoutSpeedSample: Identifiable, Codable, Equatable {
 @MainActor
 final class WorkoutRouteTracker: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published private(set) var distanceM = 0.0
+    @Published private(set) var distanceToGoalM: Double?
     @Published private(set) var currentCadence: Int?
     @Published private(set) var averageCadence: Int?
     @Published private(set) var route: [CLLocationCoordinate2D] = []
@@ -40,6 +41,7 @@ final class WorkoutRouteTracker: NSObject, ObservableObject, CLLocationManagerDe
     @Published private(set) var statusMessage: String?
 
     var onMetrics: ((Int?, Double, Int?) -> Void)?
+    var goal: GoalPoint?
 
     private let locationManager = CLLocationManager()
     private let pedometer = CMPedometer()
@@ -63,6 +65,7 @@ final class WorkoutRouteTracker: NSObject, ObservableObject, CLLocationManagerDe
 
     func start() {
         distanceM = 0
+        distanceToGoalM = nil
         currentCadence = nil
         averageCadence = nil
         route = []
@@ -82,6 +85,7 @@ final class WorkoutRouteTracker: NSObject, ObservableObject, CLLocationManagerDe
     func reset() {
         pause()
         distanceM = 0
+        distanceToGoalM = nil
         currentCadence = nil
         averageCadence = nil
         route = []
@@ -166,6 +170,9 @@ final class WorkoutRouteTracker: NSObject, ObservableObject, CLLocationManagerDe
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard isActive else { return }
         for location in locations where location.horizontalAccuracy >= 0 && location.horizontalAccuracy <= 25 {
+            if let goal {
+                distanceToGoalM = location.distance(from: CLLocation(latitude: goal.latitude, longitude: goal.longitude))
+            }
             let previous = lastLocation
             lastLocation = location
             guard let activeStartedAt else { continue }

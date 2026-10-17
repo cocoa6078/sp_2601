@@ -37,6 +37,7 @@ final class StrideCalibrationManager: NSObject, ObservableObject, CLLocationMana
     private var startedAt: Date?
     private var lastLocation: CLLocation?
     private var timerTask: Task<Void, Never>?
+    private var runningCadenceSamples: [Double] = []
 
     override init() {
         let defaults = UserDefaults.standard
@@ -85,6 +86,7 @@ final class StrideCalibrationManager: NSObject, ObservableObject, CLLocationMana
         steps = 0
         elapsedS = 0
         lastLocation = nil
+        runningCadenceSamples = []
         let start = Date()
         startedAt = start
         isMeasuring = true
@@ -115,6 +117,11 @@ final class StrideCalibrationManager: NSObject, ObservableObject, CLLocationMana
                     return
                 }
                 self.steps = data?.numberOfSteps.intValue ?? 0
+                if self.measuringMode == .running,
+                   let cadence = data?.currentCadence?.doubleValue,
+                   cadence.isFinite, cadence > 0 {
+                    self.runningCadenceSamples.append(cadence * 60)
+                }
             }
         }
     }
@@ -122,8 +129,9 @@ final class StrideCalibrationManager: NSObject, ObservableObject, CLLocationMana
     func finish() {
         guard isMeasuring, let startedAt else { return }
         let duration = Date().timeIntervalSince(startedAt)
-        guard distanceM >= 30, steps >= 20, duration >= 20 else {
-            errorMessage = "歩幅を出すには、屋外で30m以上・20歩以上歩いてから完了してください。"
+        guard distanceM >= 30, steps >= 20 else {
+            let movement = measuringMode == .walking ? "歩いて" : "走って"
+            errorMessage = "歩幅を出すには、屋外で30m以上・20歩以上\(movement)から完了してください。"
             return
         }
 
@@ -133,7 +141,16 @@ final class StrideCalibrationManager: NSObject, ObservableObject, CLLocationMana
             return
         }
 
-        let cadence = Int((Double(steps) / duration * 60).rounded())
+        let cadenceValue: Double
+        if measuringMode == .running, !runningCadenceSamples.isEmpty {
+            let samples = runningCadenceSamples.sorted()
+            let trimCount = samples.count >= 5 ? samples.count / 10 : 0
+            let reliableSamples = samples.dropFirst(trimCount).dropLast(trimCount)
+            cadenceValue = reliableSamples.reduce(0, +) / Double(reliableSamples.count)
+        } else {
+            cadenceValue = Double(steps) / max(duration, 1) * 60
+        }
+        let cadence = Int(cadenceValue.rounded())
         UserDefaults.standard.set(stride, forKey: measuringMode.strideKey)
         UserDefaults.standard.set(cadence, forKey: measuringMode.cadenceKey)
         if measuringMode == .walking {
@@ -189,6 +206,7 @@ final class StrideCalibrationManager: NSObject, ObservableObject, CLLocationMana
         locationManager.stopUpdatingLocation()
         pedometer.stopUpdates()
         startedAt = nil
+        runningCadenceSamples = []
         isMeasuring = false
     }
 }

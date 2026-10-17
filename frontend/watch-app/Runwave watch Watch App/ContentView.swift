@@ -7,7 +7,6 @@ import SwiftUI
 import WatchKit
 
 struct ContentView: View {
-    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var connectivity = WatchConnectivityManager()
     @StateObject private var output = TempoOutputPlayer()
     @State private var previewID: UUID?
@@ -20,6 +19,8 @@ struct ContentView: View {
         Group {
             if connectivity.sessionState == .ended {
                 workoutSummaryView
+            } else if connectivity.sessionState == .goalReached {
+                goalView
             } else if isDemoRunning {
                 demoView
             } else {
@@ -37,6 +38,10 @@ struct ContentView: View {
                 isDemoRunning = true
             case .paused:
                 isPaused = true
+            case .goalReached:
+                previewID = nil
+                isDemoRunning = false
+                isPaused = false
             case .ended:
                 previewID = nil
                 isDemoRunning = false
@@ -82,14 +87,13 @@ struct ContentView: View {
         [
             isDemoRunning ? "running" : "idle",
             isPaused ? "paused" : "active",
-            scenePhase == .active ? "foreground" : "background",
             connectivity.outputSettings.mode.rawValue,
             previewID?.uuidString ?? ""
         ].joined(separator: ":")
     }
 
     private var playbackConfiguration: TempoPlaybackConfiguration? {
-        guard isDemoRunning, !isPaused, scenePhase == .active,
+        guard isDemoRunning, !isPaused,
               connectivity.outputSettings.mode == .haptic || connectivity.outputSettings.mode == .audio else { return nil }
         return TempoPlaybackConfiguration(
             cadence: connectivity.guidedCadence,
@@ -242,6 +246,26 @@ struct ContentView: View {
                 .controlSize(.small)
         }
         .padding(.horizontal, 4)
+    }
+
+    private var goalView: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "flag.checkered")
+                .font(.system(size: 30, weight: .semibold))
+                .foregroundStyle(.green)
+            Text("ゴール")
+                .font(.system(size: 27, weight: .heavy, design: .rounded))
+            if let distance = connectivity.goalDistanceToGo {
+                Text("あと約\(Int(distance.rounded()))m")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            Text("iPhoneで終了を確認してください")
+                .font(.system(size: 9))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.horizontal, 5)
     }
 
     private var distanceLabel: String {

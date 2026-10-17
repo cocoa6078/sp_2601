@@ -849,6 +849,8 @@
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "ワークアウト中の心拍数をRUNWAVEに表示します。";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "RUNWAVEのワークアウトをヘルスケアに記録します。";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_UIBackgroundModes = audio;
+				INFOPLIST_KEY_WKBackgroundModes = "workout-processing";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.yuta.runwave.Runwave;
 				INFOPLIST_KEY_WKRunsIndependentlyOfCompanionApp = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -886,6 +888,8 @@
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "ワークアウト中の心拍数をRUNWAVEに表示します。";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "RUNWAVEのワークアウトをヘルスケアに記録します。";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_UIBackgroundModes = audio;
+				INFOPLIST_KEY_WKBackgroundModes = "workout-processing";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.yuta.runwave.Runwave;
 				INFOPLIST_KEY_WKRunsIndependentlyOfCompanionApp = YES;
 				LD_RUNPATH_SEARCH_PATHS = (

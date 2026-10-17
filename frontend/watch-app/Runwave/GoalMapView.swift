@@ -13,6 +13,8 @@
 import SwiftUI
 import MapKit
 import Foundation
+import CoreLocation
+import Combine
 
 // MARK: - 型
 
@@ -53,15 +55,88 @@ struct GoalPoint: Equatable {
 
 /// 終了地点を小さく見せる地図。タップ・ドラッグは受け付けない。
 struct GoalPreviewMap: View {
-    let goal: GoalPoint
+    let goal: GoalPoint?
+    let currentLocation: CLLocationCoordinate2D?
+
+    private var displayRegion: MKCoordinateRegion {
+        let fallback = GoalPoint.sapporoStation.coordinate
+        guard let goal, let currentLocation else {
+            let center = currentLocation ?? goal?.coordinate ?? fallback
+            return MKCoordinateRegion(
+                center: center,
+                span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.02)
+            )
+        }
+
+        let latitudeDelta = max(0.012, abs(goal.latitude - currentLocation.latitude) * 1.8)
+        let longitudeDelta = max(0.02, abs(goal.longitude - currentLocation.longitude) * 1.8)
+        return MKCoordinateRegion(
+            center: CLLocationCoordinate2D(
+                latitude: (goal.latitude + currentLocation.latitude) / 2,
+                longitude: (goal.longitude + currentLocation.longitude) / 2
+            ),
+            span: MKCoordinateSpan(latitudeDelta: latitudeDelta, longitudeDelta: longitudeDelta)
+        )
+    }
 
     var body: some View {
-        // .constant なので goal が変わるたびに表示位置も追従する。
-        Map(position: .constant(MapCameraPosition.region(goal.region(span: 0.01)))) {
-            Marker("終了地点", coordinate: goal.coordinate)
+        Map(position: .constant(MapCameraPosition.region(displayRegion))) {
+            if let goal {
+                Marker("終了地点", coordinate: goal.coordinate)
+            }
+            if let currentLocation {
+                Marker("現在地", systemImage: "location.fill", coordinate: currentLocation)
+                    .tint(.blue)
+            }
         }
         .allowsHitTesting(false)
-        .accessibilityLabel("終了地点の地図プレビュー")
+        .accessibilityLabel("現在地と終了地点の地図プレビュー")
+    }
+}
+
+@MainActor
+final class CurrentLocationObserver: NSObject, ObservableObject, CLLocationManagerDelegate {
+    @Published private(set) var coordinate: CLLocationCoordinate2D?
+    @Published private(set) var isDenied = false
+
+    private let manager = CLLocationManager()
+
+    override init() {
+        super.init()
+        manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+    }
+
+    func start() {
+        isDenied = manager.authorizationStatus == .denied || manager.authorizationStatus == .restricted
+        switch manager.authorizationStatus {
+        case .notDetermined:
+            manager.requestWhenInUseAuthorization()
+        case .authorizedAlways, .authorizedWhenInUse:
+            manager.startUpdatingLocation()
+        case .denied, .restricted:
+            break
+        @unknown default:
+            break
+        }
+    }
+
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        isDenied = manager.authorizationStatus == .denied || manager.authorizationStatus == .restricted
+        if manager.authorizationStatus == .authorizedAlways || manager.authorizationStatus == .authorizedWhenInUse {
+            manager.startUpdatingLocation()
+        }
+    }
+
+    func stop() {
+        manager.stopUpdatingLocation()
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let location = locations.last,
+              location.horizontalAccuracy >= 0,
+              location.horizontalAccuracy <= 100 else { return }
+        coordinate = location.coordinate
     }
 }
 

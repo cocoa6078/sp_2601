@@ -6,7 +6,7 @@ import WatchConnectivity
 /// iPhone から届く目標値とセッション操作を Watch アプリに反映する。
 final class WatchConnectivityManager: NSObject, ObservableObject, WCSessionDelegate {
     enum SessionState {
-        case idle, running, paused, ended
+        case idle, running, paused, goalReached, ended
     }
 
     @Published private(set) var sessionState: SessionState = .idle
@@ -17,6 +17,7 @@ final class WatchConnectivityManager: NSObject, ObservableObject, WCSessionDeleg
     @Published private(set) var activityMode = "running"
     @Published private(set) var workoutDistance: Double?
     @Published private(set) var workoutAverageCadence: Int?
+    @Published private(set) var goalDistanceToGo: Double?
     @Published private(set) var heartRate: Int?
     @Published private(set) var isReachable = false
     @Published private(set) var sessionStatus = "iPhone未接続"
@@ -97,6 +98,7 @@ final class WatchConnectivityManager: NSObject, ObservableObject, WCSessionDeleg
                 self.workoutStartedAt = Date()
                 self.workoutDistance = nil
                 self.workoutAverageCadence = nil
+                self.goalDistanceToGo = nil
                 self.heartRate = nil
                 self.sessionStatus = "セッション実行中"
                 self.sessionState = .running
@@ -113,6 +115,15 @@ final class WatchConnectivityManager: NSObject, ObservableObject, WCSessionDeleg
                 self.sessionStatus = "セッション実行中"
                 self.sessionState = .running
                 self.heartRateWorkout.resume()
+            case "goalApproach":
+                guard self.sessionState == .running || self.sessionState == .paused else { return }
+                self.goalDistanceToGo = payload["distanceToGoal"] as? Double
+                self.sessionStatus = "ゴール"
+                self.sessionState = .goalReached
+            case "goalContinue":
+                guard self.sessionState == .goalReached else { return }
+                self.sessionStatus = "セッション実行中"
+                self.sessionState = .running
             case "workoutEnd":
                 self.freezeWorkoutClock()
                 self.heartRateWorkout.stop()

@@ -59,6 +59,10 @@ final class WatchConnectivityLink: NSObject, WatchLink, WCSessionDelegate {
     }
     func workoutDidPause() { send([Key.type: "workoutPause"]) }
     func workoutDidResume() { send([Key.type: "workoutResume"]) }
+    func workoutDidReachGoal(distanceToGoal: Double) {
+        send([Key.type: "goalApproach", "distanceToGoal": distanceToGoal])
+    }
+    func workoutDidContinueAfterGoal() { send([Key.type: "goalContinue"]) }
     func workoutDidEnd(elapsed: TimeInterval, distance: Double?, averageCadence: Int?, activityMode: ActivityMode) {
         var payload: [String: Any] = [
             Key.type: "workoutEnd",
