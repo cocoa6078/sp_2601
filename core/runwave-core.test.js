@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  calibrate, requiredBpm, signalAt, safeGreenWindows, limitRate, chooseTarget,
-  createRun, step, simulate, compare, validateConfig,
+  calibrate, requiredBpm, signalAt, safeGreenWindows, canEnter, limitRate, chooseTarget,
+  createRun, step, simulate, compare, validateConfig, MODES,
 } from './runwave-core.js';
-import { SCENARIOS, DEMO, withCrossing } from './scenarios.js';
+import { SCENARIOS, DEMO, withCrossing, withModel } from './scenarios.js';
 
 const near = (a, b, eps = 1e-6) => assert.ok(Math.abs(a - b) < eps, `${a} ≉ ${b}`);
 const SIG = { cycleS: 120, greenS: 50, yellowS: 5, redS: 65, phaseS: 0, crossingM: 20 };
@@ -17,35 +17,61 @@ function trace(config) {
 }
 const withPhase = (config, phaseS) => ({ ...config, signal: { ...config.signal, phaseS } });
 const withEnabled = (config, enabled) => ({ ...config, control: { ...config.control, enabled } });
+const withControl = (config, control) => ({ ...config, control: { ...config.control, ...control } });
 
-// 性質テストに使う条件の組み合わせ（位相・横断距離・制御ON/OFF）
+// 性質テストに使う条件の組み合わせ（位相・横断モデル・制御ON/OFF）
 const sweep = [];
 for (let phaseS = 0; phaseS < 120; phaseS += 7)
-  for (const crossingM of [0, 20])
+  for (const model of ['point', 'length'])
     for (const enabled of [false, true])
-      sweep.push(withEnabled(withPhase(withCrossing(SCENARIOS.A, crossingM), phaseS), enabled));
+      sweep.push(withEnabled(withModel(withPhase(SCENARIOS.A, phaseS), model), enabled));
 
-// ---------- 手計算との一致 ----------
-test('calibrate: L=D/N, C0=60N/T, v0=L·C0/60', () => {
-  const r = calibrate({ distanceM: 400, steps: 500, timeS: 200 });
+// ---------- 手計算との一致（v4 6章） ----------
+test('calibrate: 160m/200歩/80秒 → 0.8m・150BPM・2m/s', () => {
+  const r = calibrate({ distanceM: 160, steps: 200, timeS: 80 });
   near(r.strideM, 0.8);
   near(r.baseBpm, 150);
   near(r.speedMps, 2);
 });
 
-test('requiredBpm: D400・L0.8・T188 → 159.6', () => {
-  near(requiredBpm(400, 0.8, 188), 24000 / 150.4);
-  assert.equal(requiredBpm(400, 0.8, 188).toFixed(1), '159.6');
+test('requiredBpm: 400m・0.8m で 188秒 → 159.57、215秒 → 139.53', () => {
+  near(requiredBpm(400, 0.8, 188), 159.574, 1e-3);
+  near(requiredBpm(400, 0.8, 215), 139.535, 1e-3);
 });
 
-test('不正な入力は RangeError', () => {
+test('requiredBpm: 距離0は0、到着までの残り秒が0以下は拒否', () => {
+  assert.equal(requiredBpm(0, 0.8, 10), 0);
+  assert.throws(() => requiredBpm(400, 0.8, 0), RangeError);
+  assert.throws(() => requiredBpm(400, 0.8, -5), RangeError);
+});
+
+// ---------- 入力検証 ----------
+test('不正な入力は RangeError（NaN・Infinity・null・周期不整合）', () => {
   assert.throws(() => calibrate({ distanceM: 0, steps: 10, timeS: 5 }), RangeError);
   assert.throws(() => validateConfig({ ...SCENARIOS.A, signal: { ...SIG, redS: 60 } }), RangeError);
   assert.throws(() => validateConfig({ ...SCENARIOS.A, runner: { strideM: 0.8, baseBpm: NaN } }), RangeError);
+  assert.throws(() => validateConfig({ ...SCENARIOS.A, runner: { strideM: Infinity, baseBpm: 150 } }), RangeError);
+  assert.throws(() => validateConfig({ ...SCENARIOS.A, signal: { ...SIG, phaseS: null } }), RangeError);
+});
+
+test('不正な control・dt を拒否する', () => {
+  for (const bad of [
+    { stepIntervalS: 0 }, { stepIntervalS: 0.05 }, { stepBpm: NaN }, { horizonS: null },
+    { startMarginS: Infinity }, { targetIntervalS: -1 }, { enabled: 'yes' }, { crossingModel: 'zone' },
+  ]) assert.throws(() => validateConfig(withControl(SCENARIOS.A, bad)), RangeError, JSON.stringify(bad));
+  assert.throws(() => validateConfig({ ...SCENARIOS.A, dt: 0.05 }), RangeError);
+  assert.doesNotThrow(() => validateConfig({ ...SCENARIOS.A, dt: 0.1 }));
+  assert.throws(() => simulate(SCENARIOS.A, { maxTimeS: NaN }), RangeError);
+});
+
+test('signalAt・safeGreenWindows は不正な引数を拒否する', () => {
+  assert.throws(() => signalAt(SIG, NaN), RangeError);
+  assert.throws(() => signalAt({ ...SIG, cycleS: 0 }, 0), RangeError);
+  assert.throws(() => safeGreenWindows(SIG, 10, 5), RangeError);
 });
 
 // ---------- 信号（位相・境界） ----------
-test('signalAt: 青→青点滅→赤、境界は次の色（半開区間）', () => {
+test('signalAt: 位相0で t=0 青、50 から青点滅、55 赤、120 青（半開区間）', () => {
   assert.equal(signalAt(SIG, 0).color, 'green');
   near(signalAt(SIG, 0).remainingS, 50);
   assert.equal(signalAt(SIG, 49.9).color, 'green');
@@ -58,12 +84,12 @@ test('signalAt: 青→青点滅→赤、境界は次の色（半開区間）', (
   near(signalAt(SIG, 30).cycleProgress, 0.25);
 });
 
-test('signalAt: phaseS は時刻0にサイクルの何秒目か。負や周期超えも正規化', () => {
+test('signalAt: 非0位相・複数周期後・負や周期超えの位相', () => {
   assert.equal(signalAt({ ...SIG, phaseS: 20 }, 100).color, 'green');   // 100+20=120 → 0秒目
   assert.equal(signalAt({ ...SIG, phaseS: 20 }, 99.9).color, 'red');
   assert.equal(signalAt({ ...SIG, phaseS: -10 }, 0).color, 'red');      // 110秒目
   assert.equal(signalAt({ ...SIG, phaseS: 250 }, 0).color, 'green');    // 10秒目
-  // 0.1刻みを積み重ねても境界がずれない
+  assert.equal(signalAt(SIG, 120 * 7 + 50).color, 'flashing');          // 7周期後
   assert.equal(signalAt(SIG, 500 / 10).color, 'flashing');
 });
 
@@ -71,12 +97,14 @@ test('safeGreenWindows: [青開始+3, 青終了−横断時間−5)', () => {
   const ws = safeGreenWindows({ ...SIG, phaseS: 20 }, 0, 300, { startMarginS: 3, endMarginS: 5, crossTimeS: 10 });
   // t=0 より前に始まった青（−20〜30秒）の窓は fromT で切り詰めて返す
   assert.deepEqual(ws, [{ startT: 0, endT: 15 }, { startT: 103, endT: 135 }, { startT: 223, endT: 255 }]);
+  // point モデル（横断時間0）
+  assert.deepEqual(safeGreenWindows({ ...SIG, phaseS: 20 }, 100, 200, { startMarginS: 3, endMarginS: 5 }), [{ startT: 103, endT: 145 }]);
   // 余裕で潰れる青は返さない
   assert.deepEqual(safeGreenWindows({ ...SIG, greenS: 10, redS: 105 }, 0, 100, { crossTimeS: 5 }), []);
 });
 
 // ---------- BPM制限 ----------
-test('limitRate: t=0 と 4秒の倍数以外では変えない', () => {
+test('limitRate: t=0 と 4秒の倍数以外では変えない。1回最大2', () => {
   const cfg = SCENARIOS.A;
   assert.equal(limitRate(150, 130, { tick: 0 }, cfg), 150);
   assert.equal(limitRate(150, 130, { tick: 39 }, cfg), 150);
@@ -90,15 +118,16 @@ test('limitRate: 通常BPM±20を超えない', () => {
   assert.equal(limitRate(170, 200, { tick: 40 }, cfg), 170);
 });
 
-test('走行中のBPMは常に±20以内、変化は4秒の倍数の時刻だけで1回2以内（再開時の例外を除く）', () => {
+test('走行中のBPMは±20以内、変化は4秒の倍数で1回2以内。待機中は0、再開は通常BPMへ即時（例外）', () => {
   for (const cfg of sweep) {
     const tr = trace(cfg);
     const base = cfg.runner.baseBpm;
     for (let i = 1; i < tr.length; i++) {
       const [a, b] = [tr[i - 1], tr[i]];
+      if (b.phase === 'waiting') { assert.equal(b.bpm, 0); continue; }
       assert.ok(b.bpm >= base - 20 && b.bpm <= base + 20);
+      if (a.phase === 'waiting' || b.stops > a.stops) { assert.equal(b.bpm, base); continue; } // 再開の例外（同じステップ内の停止→再開も含む）
       if (a.bpm === b.bpm) continue;
-      if (a.phase === 'waiting') { assert.equal(b.bpm, base); continue; } // 再開: 通常BPMへ即時
       assert.equal(a.tick % 40, 0, `t=${a.t} で変化`);
       assert.ok(a.tick > 0);
       assert.ok(Math.abs(b.bpm - a.bpm) <= 2);
@@ -106,35 +135,97 @@ test('走行中のBPMは常に±20以内、変化は4秒の倍数の時刻だけ
   }
 });
 
-// ---------- 横断の安全（モデル上） ----------
-test('青点滅・赤のときに横断へ進入しない。横断中は常に青', () => {
+test('目標の再計算は1秒ごと（それ以外の時刻で targetBpm が変わらない）', () => {
+  for (const cfg of [SCENARIOS.A, SCENARIOS.B, DEMO.sub]) {
+    const tr = trace(cfg);
+    for (let i = 1; i < tr.length; i++) {
+      const [a, b] = [tr[i - 1], tr[i]];
+      if (a.targetBpm !== b.targetBpm && a.phase === 'approach') assert.equal(a.tick % 10, 0, `t=${a.t}`);
+    }
+  }
+});
+
+// ---------- 横断の判定（モデル上） ----------
+test('青点滅・赤のときに横断地点を通過しない。停止→再開、停止回数が正しい', () => {
   for (const cfg of sweep) {
     const tr = trace(cfg);
     const { crossingX } = cfg.route;
+    let stops = 0;
     for (let i = 1; i < tr.length; i++) {
       const [a, b] = [tr[i - 1], tr[i]];
+      if (a.phase !== 'waiting' && b.phase === 'waiting') stops++;
       if (a.phase === 'waiting' && b.phase !== 'waiting') {
         assert.equal(signalAt(cfg.signal, a.t).color, 'green', `再開 t=${a.t}`);
       }
       if (a.phase === 'approach' && b.x > crossingX) {
         const arriveT = a.t + (crossingX - a.x) / (cfg.runner.strideM * b.bpm / 60);
-        assert.equal(signalAt(cfg.signal, arriveT).color, 'green', `進入 t=${arriveT}`);
+        assert.equal(signalAt(cfg.signal, arriveT).color, 'green', `通過 t=${arriveT}`);
       }
       if (b.phase === 'crossing') assert.equal(b.signal.color, 'green', `横断中 t=${b.t}`);
       assert.ok(b.x <= cfg.route.goalX);
     }
+    assert.equal(tr.at(-1).stops, stops);
   }
 });
 
-test('ゴール後の step は同じ state を返す', () => {
+test('point モデルでは横断長を使わない（横断長を変えても結果が同じ）', () => {
+  assert.deepEqual(compare(withCrossing(SCENARIOS.B, 0)), compare(withCrossing(SCENARIOS.B, 15)));
+});
+
+test('ゴールで mode・phase が finished、その後の step は同じ state を返す', () => {
   const { state } = simulate(SCENARIOS.A);
   assert.equal(state.finished, true);
+  assert.equal(state.mode, 'finished');
+  assert.ok(MODES.includes(state.mode));
   assert.equal(step(state, SCENARIOS.A), state);
 });
 
+test('上限時間までにゴールしなければ timeLimit。待機中の時間も停止時間に含める', () => {
+  // 青の無い信号は無いので、上限を短くして待機中に打ち切る（通常走行は200秒で横断地点、t=200〜220 待機）
+  const { summary } = simulate(withEnabled(SCENARIOS.A, false), { maxTimeS: 210 });
+  assert.equal(summary.finished, false);
+  assert.equal(summary.termination, 'timeLimit');
+  assert.equal(summary.totalTimeS, null);
+  near(summary.stopTimeS, 10, 0.11);
+});
+
+// ---------- v4 レビューで見つかった不具合の回帰テスト ----------
+test('横断地点とゴールが同じ位置の config は拒否（赤で止まったままゴールにならない）', () => {
+  assert.throws(() => validateConfig({ ...SCENARIOS.A, route: { crossingX: 400, goalX: 400 } }), RangeError);
+});
+
+test('待機中、ステップの途中で始まる短い青でも再開し、停止時間を正しく数える', () => {
+  // 周期1秒・青0.02秒・位相0.95、横断地点0.04m・2m/s → 0.02秒に赤で停止、0.05秒に青
+  const cfg = {
+    signal: { cycleS: 1, greenS: 0.02, yellowS: 0, redS: 0.98, phaseS: 0.95, crossingM: 0 },
+    runner: { strideM: 0.8, baseBpm: 150 },
+    route: { crossingX: 0.04, goalX: 1 },
+    control: { enabled: false },
+  };
+  const { summary } = simulate(cfg, { maxTimeS: 5 });
+  assert.equal(summary.termination, 'finished');
+  assert.equal(summary.stops, 1);
+  near(summary.stopTimeS, 0.03, 1e-6);
+});
+
+test('公開関数は null・負の値・NaN を拒否する', () => {
+  assert.throws(() => safeGreenWindows(SIG, 0, 100, { startMarginS: null }), RangeError);
+  assert.throws(() => canEnter(SIG, 0, -1), RangeError);
+  assert.throws(() => limitRate(NaN, 150, { tick: 40 }, SCENARIOS.A), RangeError);
+  assert.throws(() => limitRate(150, 150, { tick: 0.5 }, SCENARIOS.A), RangeError);
+});
+
+test('巨大な位相でも安全窓の探索が終わる', () => {
+  const ws = safeGreenWindows({ ...SIG, phaseS: 1e20 }, 0, 300);
+  assert.ok(Array.isArray(ws) && ws.length >= 2);
+});
+
 // ---------- 再現性・純粋性 ----------
-test('同じ入力なら同じ結果', () => {
+test('同じ入力なら同じ結果。通常と制御ありの差は enabled だけ', () => {
   for (const cfg of sweep.slice(0, 8)) assert.deepEqual(simulate(cfg), simulate(structuredClone(cfg)));
+  const r = compare(SCENARIOS.A);
+  assert.equal(r.normal.enabled, false);
+  assert.equal(r.runwave.enabled, true);
 });
 
 test('step は入力の state を変更しない', () => {
@@ -149,16 +240,29 @@ test('chooseTarget: 制御OFFなら常に通常BPM', () => {
   assert.deepEqual(chooseTarget(createRun(cfg), cfg), { targetBpm: 150, mode: 'normal' });
 });
 
-// ---------- 比較シナリオ ----------
-test('シナリオA（横断20m）: 通常は20秒停止、RUNWAVEは減速して停止なし', () => {
+// ---------- 比較シナリオ（v4 5章、point モデル） ----------
+test('シナリオA: 通常は20秒停止、RUNWAVE は減速して停止なし（総時間は少し長い）', () => {
   const { normal, runwave } = compare(SCENARIOS.A);
   assert.equal(normal.stops, 1);
   near(normal.stopTimeS, 20);
   near(normal.totalTimeS, 320, 0.11);
   assert.equal(runwave.stops, 0);
   assert.ok(runwave.minBpm >= 130 && runwave.maxBpm <= 150);
-  // 回帰: 窓の境界判定の丸めで不要に深く減速しない（133 は段階調整込みの最小変化）
   assert.equal(runwave.minBpm, 133);
+});
+
+test('シナリオB: 通常は60秒停止、RUNWAVE は加速して停止なし', () => {
+  const { normal, runwave } = compare(SCENARIOS.B);
+  assert.equal(normal.stops, 1);
+  near(normal.stopTimeS, 60);
+  assert.equal(runwave.stops, 0);
+  assert.ok(runwave.minBpm >= 150 && runwave.maxBpm <= 170);
+  assert.ok(runwave.totalTimeS < normal.totalTimeS);
+});
+
+test('length モデル（拡張）: シナリオB は横断20mだと回避できない', () => {
+  const b = compare(withModel(SCENARIOS.B, 'length'));
+  assert.equal(b.runwave.stops, 1);
 });
 
 test('デモ推奨: 通常は止まり RUNWAVE は止まらない。位相±5秒でも成立', () => {
@@ -169,16 +273,4 @@ test('デモ推奨: 通常は止まり RUNWAVE は止まらない。位相±5秒
       assert.equal(runwave.stops, 0);
     }
   }
-  const main = compare(DEMO.main);
-  assert.ok(main.runwave.totalTimeS < main.normal.totalTimeS); // 加速ケースは早く着く
-});
-
-test('シナリオB: 横断20mでは回避不可で停止、点通過(0m)なら加速して停止なし', () => {
-  const b20 = compare(SCENARIOS.B);
-  assert.equal(b20.normal.stops, 1);
-  near(b20.normal.stopTimeS, 60);
-  assert.equal(b20.runwave.stops, 1);
-  const b0 = compare(withCrossing(SCENARIOS.B, 0));
-  assert.equal(b0.runwave.stops, 0);
-  assert.ok(b0.runwave.maxBpm <= 170 && b0.runwave.minBpm >= 150);
 });

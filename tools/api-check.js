@@ -69,6 +69,9 @@ function coreIntegration(results) {
         try {
           validateConfig(config);
           item.summary = compare(config); // { normal, runwave }
+          for (const [k, sm] of Object.entries(item.summary)) {
+            if (sm.termination !== 'finished') item.problems.push(`${k} がゴールしない（${sm.termination}）`);
+          }
         } catch (e) {
           item.problems.push(`core が受け付けない: ${e.message}`);
         }
@@ -124,5 +127,6 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const file = new URL(`${rep.at.replace(/[:.]/g, '-')}.json`, dir);
   writeFileSync(file, JSON.stringify(rep, null, 2));
   console.log(`保存: ${fileURLToPath(file)}`);
-  process.exit(rep.results.every((r) => r.skipped || r.ok) ? 0 : 1);
+  const coreOk = rep.core.signals.every((s) => s.problems.length === 0) && (!rep.core.runner || rep.core.runner.problems.length === 0);
+  process.exit(rep.results.every((r) => r.skipped || r.ok) && coreOk ? 0 : 1);
 }

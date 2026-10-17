@@ -1,95 +1,101 @@
-# runwave-core CONTRACT 案（v0.1.0 / UI担当と要合意）
+# runwave-core CONTRACT 案（v0.2.0 / 作業票 v4 準拠・UI担当と要合意）
 
 状態: **案**。✅=実装・テスト済み、❓=チームで合意が必要。
+実測入力・ユーザー操作・優先順位（v4 9章 Y11/Y12）は [CONTRACT-ext.md](CONTRACT-ext.md)。
 
 ## 単位
-時間=秒(s)、距離=m、BPM=歩/分（1拍=1歩。心拍数ではない）。dt=0.1秒固定、乱数なし。
+時間=秒(s)、距離=m、BPM=歩/分（ケイデンス。1拍=1歩。心拍数ではない）。dt=0.1秒固定、乱数なし。
 
 ## 置き場所と読み込み
-- `core/runwave-core.js`（ES module、DOM非依存）。UI からは `import { createRun, step, ... } from './core/runwave-core.js'`
-- ルートの `package.json` に `"type": "module"`。
+- `core/runwave-core.js`（ES module、DOM・通信に依存しない）。UI からは `import { createRun, step, ... } from './core/runwave-core.js'`
+- API の取得はフロントが行い、`core/api-adapter.js` で検証・変換した config を core に渡す。API なしでも固定 config で同じ計算が動く ✅
+- テスト: リポジトリ直下で `npm test`
 
 ## config
 ```js
 {
-  signal:  { cycleS: 120, greenS: 50, yellowS: 5, redS: 65, phaseS: 20, crossingM: 20 },
+  signal:  { cycleS: 120, greenS: 50, yellowS: 5, redS: 65, phaseS: 100, crossingM: 20 },
   runner:  { strideM: 0.8, baseBpm: 150 },
-  route:   { crossingX: 400, goalX: 600 },      // 停止線の位置 / ゴール位置（m、開始点から）
-  control: { enabled: true, startMarginS: 3, endMarginS: 5, maxDeltaBpm: 20, stepBpm: 2, stepIntervalS: 4, horizonS: 240 },
+  route:   { crossingX: 400, goalX: 600 },
+  control: { enabled: true, crossingModel: 'point', startMarginS: 3, endMarginS: 5,
+             maxDeltaBpm: 20, stepBpm: 2, stepIntervalS: 4, targetIntervalS: 1, horizonS: 240 },
 }
 ```
-- `greenS+yellowS+redS` と `cycleS` の差が 1e-9 未満であることを検証する。不正な値は `RangeError` ✅
-- `crossingM` は**横断距離**（長さ）。0 にすると点通過モデルになる。位置は `route.crossingX` ✅
-- ❓ `yellowS` は歩行者信号の**青点滅**の秒数として扱う（日本の歩行者信号に黄は無い）。フィールド名は仕様 F-02 との互換のため残す。
+
+### 距離の対応（直接代入しない）❓
+| 意味 | core | API | 作業票 v4 の表記 |
+|---|---|---|---|
+| スタートから横断地点までの位置（400m） | `route.crossingX` | なし（フロントが決める） | `course.crossingM` |
+| 横断歩道の長さ（15m など） | `signal.crossingM` | `crossingM` | API の crossingM |
+
+`signal.crossingM`（横断長）は `crossingModel: 'length'` のときだけ使う。既定の `point` では無視する ✅
+
+### 入力検証 ✅（不正なら RangeError）
+- 数値は有限（NaN・Infinity・null を拒否）。周期は正、各区間は0以上、`greenS+yellowS+redS` と `cycleS` の差が 1e-9 未満
+- `dt` を渡すなら 0.1 のみ。`stepIntervalS`・`targetIntervalS` は 0.1 秒の倍数の正の数
+- `crossingModel` は `point` / `length`、`enabled` は true/false、余裕は0以上
+- `goalX ≥ crossingX + 横断長`（point では横断長0）、`baseBpm − maxDeltaBpm > 0`
+- `signalAt`・`safeGreenWindows`・`requiredBpm`・`calibrate`・`simulate` も引数を検証する
 
 ## state（step が返す。UI は読むだけ）
 | フィールド | 意味 |
 |---|---|
 | `tick`, `t` | 経過 tick（整数）と秒（`t = tick/10`） |
-| `x` | 開始点からの位置 m |
-| `bpm`, `targetBpm` | 現在の歩調と目標。**停止中も bpm は保持**（停止は `phase` で表す） |
-| `mode` | `'normal'｜'adjusting'｜'stopRecommended'｜'waiting'｜'goal'`（表示名は `MODE_LABELS`） |
-| `phase` | `'approach'｜'waiting'｜'crossing'｜'after'｜'goal'` |
-| `signal` | `signalAt` の結果 `{color, label, remainingS, cycleProgress}`。color は `'green'｜'flashing'｜'red'`、label は 青/青点滅/赤 |
-| `stops`, `stopTimeS` | 停止回数、停止時間の合計（再開済みの分。停止中は `t - stoppedAtT` を足して表示） |
-| `minBpm`, `maxBpm`, `totalBpmChange` | 走行中のBPM範囲、BPM変更量の累計 |
+| `x` | スタートからの位置 m |
+| `bpm`, `targetBpm` | 現在の歩調と目標。**待機中は bpm=0** ✅ |
+| `mode` | `normal`／`adjusting`／`stopRecommended`／`waiting`／`finished`（表示名は `MODE_LABELS`: 通常／テンポ調整中／停止推奨／信号待ち／ゴール）✅ |
+| `phase` | `approach`／`waiting`／`crossing`（length のみ）／`after`／`finished` |
+| `signal` | `{color, label, remainingS, cycleProgress}`。color は `green`／`flashing`／`red`、label は 青／青点滅／赤 ❓ |
+| `stops`, `stopTimeS`, `stoppedAtT` | 停止回数、再開済みの停止時間の合計、待機を始めた時刻（待機中の表示は `stopTimeS + (t − stoppedAtT)`） |
+| `minBpm`, `maxBpm`, `totalBpmChange` | 走行中の BPM 範囲、BPM 変更量の累計（停止・再開の飛びは含めない） |
 | `finished`, `finishTimeS` | ゴールしたか、総所要時間 |
-| `history` | 1秒ごとの `{t,x,bpm,targetBpm,mode,phase,color}` |
+| `history` | 1秒ごとの `{t,x,bpm,targetBpm,mode,phase,color}`（BPM 履歴） |
 
 ## 関数
 | 関数 | 契約 |
 |---|---|
-| `calibrate({distanceM, steps, timeS})` | `{strideM, baseBpm, speedMps}` ✅ |
+| `calibrate({distanceM, steps, timeS})` | `{strideM, baseBpm, speedMps}`。160m/200歩/80秒 → 0.8m・150BPM・2m/s ✅ |
 | `signalAt(signal, t)` | 区間は半開。青[0,g) 青点滅[g,g+y) 赤[g+y,cycle)。境界ちょうどは次の色。負や周期を超える phase も正規化 ✅ |
-| `safeGreenWindows(signal, fromT, untilT, control)` | **進入**してよい時刻の窓 `[青開始+startMarginS, 青終了−crossTimeS−endMarginS)`。範囲と重なる窓を返し、開始は fromT で切り詰める ✅ |
-| `requiredBpm(D, L, T)` | 60D/(L·T)。一定BPMでの換算値。**到達できるかの判定には使わない** ✅ |
-| `chooseTarget(state, config)` | 候補 C0−20〜C0+20 の整数BPMについて、段階調整込みで到着時刻を予測し、安全窓に入るものを選ぶ。順位は (1) 通常BPMとの差が小さい (2) 同じ差なら低い方（減速寄り）。現在の目標がまだ有効なら維持する。候補が無ければ `stopRecommended` ✅ |
-| `limitRate(bpm, target, state, config)` | 変更は t=4,8,12…秒のときだけ（t=0 では変えない）、1回±2以内、C0±20 にクランプ ✅ |
-| `createRun(config)` / `step(state, config)` | step は**入力を変更せず新しい state を返す**。ゴール後は同じ state を返す ✅ |
-| `simulate(config)` | `{state, summary}`。`compare(config)` は制御OFF/ON の summary を返す ✅ |
+| `safeGreenWindows(signal, fromT, untilT, control)` | 横断地点に着いてよい時刻の窓 `[青開始+startMarginS, 青終了−crossTimeS−endMarginS)`。point では crossTimeS=0 ✅ |
+| `requiredBpm(D, L, T)` | 60D/(L·T)。D は残り距離、T は**到着までの残り秒**（絶対時刻ではない）。D=0 は0、T≤0 は拒否。目標の確定には使わない ✅ |
+| `chooseTarget(state, config)` | 候補 C0−20〜C0+20 の整数BPMを、**4秒/2BPM の段階調整込みで到着時刻を予測**し、安全窓に入るものを選ぶ。順位は (1) 通常BPMとの差が小さい (2) 同じ差なら低い方（減速寄り）。現在の目標がまだ有効なら維持。候補なしは `stopRecommended` ✅ |
+| `limitRate(bpm, target, state, config)` | 変更は t=4,8,12…秒のときだけ、1回最大2、C0±20 にクランプ ✅ |
+| `createRun(config)` / `step(state, config)` | step は**入力を変更せず**、走行中は新しい state、ゴール後は同じ state を返す ✅ |
+| `simulate(config, {maxTimeS=1800})` | `{state, summary}`。summary に `termination: 'finished'｜'timeLimit'`（時間切れは到達不能と断定しない）✅ |
+| `compare(config)` | 制御 OFF/ON の summary。差は `control.enabled` だけ ✅ |
 
 ## 挙動規則（通常走行と RUNWAVE で共通）
-1. **進入判定**: 停止線への到着時刻に「青、かつ残りの青で横断し終えられる」なら進入する。そうでなければ停止線で待機する。青点滅・赤では進入しない ✅
-2. **横断中**は信号が変わっても止まらず、進入時の BPM を保持する ✅
-3. **待機からの再開**: 青になり横断できるなら、通常BPMで即時に再開する。**これは段階調整（4秒/2BPM）の例外**で、停止中は走行テンポの制限の対象外 ✅
-4. **横断後**は通常BPMへ段階調整で戻る ✅
-5. 停止推奨（`stopRecommended`）: その場では止まらず、通常BPMへ戻しながら停止線まで走り、そこで判定する ✅
-6. startMarginS（青開始+3秒）は RUNWAVE が狙う到着時刻にだけ使う。通常走行は青ならすぐ進入する ❓
-7. 目標の再計算は4秒ごと（BPMの変更機会と同じ） ✅
+1. **横断地点の判定（point）**: 横断地点に着いた時刻の信号が青なら通過、それ以外（青点滅・赤）は止まる。1ステップでまたぐ場合も到達時刻で判定 ✅
+2. **length モデル（拡張）**: 上に加えて、残りの青のうちに渡り切れるときだけ進入。横断中は信号が変わっても止まらず、BPM を保つ ✅ ❓（採用は要合意）
+3. **再計算の周期**: 目標BPMの再計算は1秒ごと、BPM の変更は4秒ごと（別の周期）✅
+4. **停止推奨**: その場では止まらず、通常BPMへ段階的に戻しながら横断地点まで進み、非青ならそこで止まる ✅
+5. **待機と再開**: 待機中は速度0・bpm=0。青になったら通常BPMで即時再開（**段階調整・±20 の検証から除く例外**）✅ ❓
+6. **横断後**: 通常BPMへ段階調整で戻る ✅
+7. **安全余裕**: 青開始後3秒・終了前5秒は RUNWAVE が狙う到着時刻にだけ使う。通常走行は青なら通過する ❓
+8. **ゴール後**は統計を増やさない ✅
 
 ## 合意が必要な項目 ❓
-- 横断距離 `crossingM` の値（計画書に無い）。**シナリオBの結果がこの値で変わる**（下記）
-- `yellowS` を青点滅として扱うこと、color 値 `'flashing'`、表示名
-- mode/phase の値、state のフィールド名（UI の描画と1対1で対応させる）
-- 規則6（通常走行には余裕を課さない）
+- 距離の名前（`route.crossingX` と v4 の `course.crossingM`）
+- 横断モデル（point を既定、length は拡張）
+- `yellowS` を青点滅として扱うこと、color 値 `flashing`、表示名
+- 再開の例外、安全余裕の適用範囲（規則5・7）
+- 候補の「変化が小さい」の基準（今は通常BPMとの差）
 
-## 比較結果（core v0.1.0、`npm run scenarios`、Node v24.19.0）
-条件: 歩幅0.8m、通常150BPM、停止線400m、ゴール600m、周期120/青50/青点滅5/赤65、余裕3/5秒、dt=0.1秒。
-**原文で「仮」とされている値（余裕・dt）と、原文に無い追加の仮定（横断距離、横断時間を引いた安全窓、通常走行には開始余裕を課さない規則6）の上での結果。** これらが変われば結果も変わる。
+## 比較結果（core v0.2.0、`npm run scenarios`、Node v24.19.0）
+条件（v4 5章）: 歩幅0.8m、通常150BPM、横断地点400m、ゴール600m、周期120/青50/青点滅5/赤65、余裕3/5秒、±20BPM・4秒で最大2、目標再計算1秒、dt=0.1秒。
 
-| シナリオ | 横断距離 | 通常: 停止回数/停止時間/総時間 | RUNWAVE: 停止回数/停止時間/総時間 | RUNWAVE BPM範囲 |
+| シナリオ | 横断モデル | 通常: 停止回数/停止時間/総時間 | RUNWAVE: 停止回数/停止時間/総時間 | RUNWAVE BPM |
 |---|---|---|---|---|
-| A phaseS=20 | 20m | 1回 / 20s / 320.0s | 0回 / 0s / 326.3s | 133–150（減速） |
-| A phaseS=20 | 0m | 1回 / 20s / 320.0s | 0回 / 0s / 325.0s | 133–150 |
-| B phaseS=100 | 20m | 1回 / 60s / 360.0s | **1回 / 60s / 360.0s**（回避不可） | 150 |
-| B phaseS=100 | 0m | 1回 / 60s / 360.0s | 0回 / 0s / 282.9s | 150–164（加速） |
+| A phaseS=20 | point | 1回 / 20s / 320.0s | 0回 / 0s / 325.0s | 133–150（減速） |
+| B phaseS=100 | point | 1回 / 60s / 360.0s | 0回 / 0s / 282.9s | 150–164（加速） |
+| A | length（横断20m） | 1回 / 20s / 320.0s | 0回 / 0s / 326.3s | 133–150 |
+| B | length（横断20m） | 1回 / 60s / 360.0s | **1回 / 60s / 360.0s**（回避不可） | 150 |
 
-### デモ推奨（10/17 提案・未合意。`DEMO` in scenarios.js）
-A/B と同じ道のり（400m/600m、横断20m、信号120/50/5/65、余裕3/5）で、位相だけ変える。
-
-| 案 | phaseS | 通常 | RUNWAVE | BPM | 頑健性 |
-|---|---|---|---|---|---|
-| **main（加速）** | 90 | 1回 / 70s停止 / 370.0s | 0回 / 283.4s（87秒早い） | 150–163 | 位相±5秒で成立 |
-| sub（減速） | 26 | 1回 / 14s停止 / 314.0s | 0回 / 319.8s（5.8秒遅い） | 137–150 | 位相±5秒で成立 |
-
-- 動画: 比較画面を12倍速にすると main は約31秒（通常側が370秒で終わるまで）
-- 条件は歩幅0.8m・通常150BPM に合わせたもの。歩幅を実測値に替えると成立しないことがある
-
-読み方（発表用の注意）:
-- A は**停止はなくなるが、総時間は通常より約6秒長い**（減速して次の青を待つため）。「時間短縮」と言わず、「止まらずに走り続けられる」と説明する。
-- B は横断距離20mだと、横断時間と余裕を引いた窓に±20BPMでは届かない。加速で停止を回避できるのは点通過モデルのときだけ。
-- いずれも架空信号・歩幅一定の**モデル上の推定値**。
+- v4 の想定どおり、point モデルでは **A は減速、B は加速で停止を回避**できた
+- A は停止がなくなる代わりに総時間は5秒長い。「時間短縮」とは言わず「止まらずに走れる」と説明する
+- デモ推奨（`DEMO`、未合意）: main = シナリオB（位相±5秒でも成立）、sub = 位相26（通常14秒停止 → RUNWAVE 停止なし・総時間4.8秒長い、位相±5秒でも成立）
+- 数値はすべて、架空信号・固定歩幅の**モデル上の推定値**。API の信号（JARTIC 車両用の参考プリセット）でこの config を自動上書きしない
 
 ## テスト
-- 実行: `npm test`（= `node --test "core/*.test.js"`）。**`node --test core/` は Node 24 では動かない**（ディレクトリを1つのファイルとして実行しようとして失敗する。確認済み）
-- 内容: 手計算（calibrate、159.6）、信号の境界と位相、安全窓、limitRate、位相17通り×横断距離2通り×ON/OFFでの性質（BPM範囲、4秒/2BPM、非青で進入しない、横断中は常に青）、ゴール後、再現性、入力を変更しないこと、シナリオA/B
+- 実行: `npm test`（= `node --test "core/*.test.js" "tools/*.test.js"`）。`node --test core/` は Node 24 では動かない
+- 内容: v4 6章の手計算（159.57・139.53・calibrate）、信号の境界と位相・複数周期、安全窓、limitRate、位相17通り×横断モデル2通り×ON/OFF での性質（BPM範囲、4秒/2BPM、待機中0、再開の例外、非青で通過しない、停止回数）、目標の再計算1秒、point で横断長を使わないこと、ゴール後、時間切れ、入力検証、再現性、入力を変更しないこと、シナリオA/B・デモ
