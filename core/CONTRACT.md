@@ -84,6 +84,25 @@
 - 再開の例外、安全余裕の適用範囲（規則5・7）
 - 候補の「変化が小さい」の基準（今は通常BPMとの差）
 
+## 早歩きフェーズ（v0.4.0・既定は無効）
+走り（通常BPM±maxDeltaBpm）では安全な青に間に合わず止まるしかないときだけ、時速5.3〜5.8km の早歩きでつなぐ。`control.walk.enabled: false`（既定）なら従来と完全に同じ結果で、state・summary に新しい項目も出ない。
+
+- 設定：`control.walk = { enabled, minKmh: 5.3, maxKmh: 5.8, stepKmh: 0.1 }`、`runner.walkStrideM`（早歩きの歩幅、既定0.75m【仮】。API の calibration の `walkStrideM` から受け取れる）
+- 判断の順番：走りの候補で間に合う → 今まで通り ／ 通常BPMなら余裕なしで青（noMargin）→ 今まで通り ／ **早歩き**（mode `walking`、reason `walkBridge`）／ それでも無理 → 停止推奨
+- 早歩きの決め方：「あと1秒走ってからでも早歩きで間に合う」うちは走りの下限へ向けて走り続け（mode `adjusting`、reason `walkBridge`）、間に合わなくなる直前に切り替える。速さは安全な時間帯の中央に近く着くもの（同程度なら速いほう）。早歩き中も1秒ごとに速さを見直す。一度歩いたら横断を渡り終えるまで歩く
+- 早歩きの安全な時間帯：point モデルでも横断時間（横断長 ÷ 早歩きの速さ）を数える：`[青開始+3秒, 青終了−横断時間−終了前の余裕)`
+- 切り替え：走り→早歩きはすぐ（段階調整の例外）。point モデルでも横断長ぶんは歩いて渡り、渡り終えた瞬間に通常BPMの走りへ戻す（例外）
+- 出力（有効時のみ）：`gait`（run/walk）、`speedMps`、`targetSpeedKmh`、早歩き中の `bpm`・`targetBpm` は 速さ×60÷walkStrideM（Watch のテンポ用の目安）、`walkCount`・`walkTimeS`・`walkDistanceM`・`walkMinBpm`・`walkMaxBpm`（summary にも）。history に `gait`・`speedMps`。`minBpm`・`maxBpm`・`totalBpmChange`・`deviationBpmS`・`offBaseTimeS` は走りの間だけ
+- 早歩きを使うときは `goalX > crossingX + 横断長`（横断の途中をゴールにしない）
+- 比較シナリオ：`SCENARIOS_WALK.W`（400m・位相5：走りだけでは35秒停止 → 早歩き81秒・120mで停止なし）
+
+| 横断地点まで（位相120通り・point） | 通常走行 | RUNWAVE（走りだけ） | RUNWAVE（早歩きあり） | 早歩きの回数・平均 |
+|---|---|---|---|---|
+| 400m（余裕3/5秒） | 70回止まる | 30回 | **0回** | 28回・118秒・173m |
+| 600m（余裕3/5秒） | 70回 | 3回 | **0回** | 0回（走りの下限まで減速するだけで回避） |
+| 800m（余裕3/8秒） | 71回 | 0回 | 0回 | 0回 |
+（length モデル・400m：36回 → 0回、早歩き34回）
+
 ## 比較結果（core v0.3.0、`npm run scenarios`、Node v24.19.0）
 条件（v4 5章）: 歩幅0.8m、通常150BPM、横断地点400m、ゴール600m、周期120/青50/青点滅5/赤65、余裕3/5秒、±20BPM・4秒で最大2、目標再計算1秒、dt=0.1秒。
 

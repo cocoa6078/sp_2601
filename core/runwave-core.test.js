@@ -4,7 +4,7 @@ import {
   calibrate, requiredBpm, signalAt, safeGreenWindows, canEnter, limitRate, chooseTarget,
   createRun, step, simulate, compare, validateConfig, MODES,
 } from './runwave-core.js';
-import { SCENARIOS, DEMO, SCENARIOS_800M, DEMO_800M, withCrossing, withModel } from './scenarios.js';
+import { SCENARIOS, DEMO, SCENARIOS_800M, DEMO_800M, SCENARIOS_WALK, withCrossing, withModel } from './scenarios.js';
 
 const near = (a, b, eps = 1e-6) => assert.ok(Math.abs(a - b) < eps, `${a} ≉ ${b}`);
 const SIG = { cycleS: 120, greenS: 50, yellowS: 5, redS: 65, phaseS: 0, crossingM: 20 };
@@ -428,4 +428,140 @@ test('改定案のデモ: 通常は止まり RUNWAVE は止まらない。位相
       assert.equal(runwave.stops, 0);
     }
   }
+});
+
+// ---------- 早歩きフェーズ（v0.4.0） ----------
+const W400 = withCrossing(SCENARIOS.A, 15);  // 400m・余裕3/5秒・横断長15m（走りだけでは止まる位相がある）
+const WALK = { walk: { enabled: true } };
+const walkCfg = (p, extra = {}) => withControl(withPhase(W400, p), { ...WALK, ...extra });
+
+test('早歩き：手計算と一致（400m を 5.3km/h で 271.7秒・5.8km/h で 248.3秒、15m 横断 10.2秒、歩/分の目安）', () => {
+  // 時間 = 距離 ÷ 速さ（km/h ÷ 3.6）、歩/分の目安 = 速さ(m/s)×60÷歩幅0.75m
+  const t = (d, kmh) => d / (kmh / 3.6);
+  near(t(400, 5.3), 271.698, 1e-3);
+  near(t(400, 5.8), 248.276, 1e-3);
+  near(t(15, 5.3), 10.189, 1e-3);
+  // core の state でも同じ式になっている（早歩き中の bpm）
+  const tr = trace(walkCfg(0));
+  const w = tr.find((s) => s.gait === 'walk');
+  near(w.bpm, (w.targetSpeedKmh / 3.6) * 60 / 0.75, 1e-3);
+  near(5.3 / 3.6 * 60 / 0.75, 117.778, 1e-3);
+  near(5.8 / 3.6 * 60 / 0.75, 128.889, 1e-3);
+});
+
+test('早歩き：walk.enabled=false なら、今までと完全に同じ（state に新しい項目も無い）', () => {
+  for (let p = 0; p < 120; p += 7) {
+    const cfg = withPhase(W400, p);
+    assert.deepEqual(simulate(withControl(cfg, { walk: { enabled: false } })), simulate(cfg));
+  }
+  assert.equal('gait' in createRun(W400), false);
+});
+
+test('早歩き：入力検証（速さの範囲・刻み・歩幅・ゴールの位置）', () => {
+  for (const walk of [{ minKmh: 6, maxKmh: 5 }, { minKmh: 0, maxKmh: 5 }, { maxKmh: 6.3 }, { stepKmh: 0 }, { enabled: 'yes' }]) {
+    assert.throws(() => validateConfig(withControl(W400, { walk: { enabled: true, ...walk } })), RangeError, JSON.stringify(walk));
+  }
+  assert.throws(() => validateConfig({ ...withControl(W400, WALK), runner: { strideM: 0.8, baseBpm: 150, walkStrideM: -1 } }), RangeError);
+  assert.throws(() => validateConfig({ ...withControl(W400, WALK), route: { crossingX: 400, goalX: 410 } }), RangeError);  // 横断の途中がゴール
+});
+
+test('早歩き：400m・全位相で止まらない（point・length）', () => {
+  for (const model of ['point', 'length']) {
+    let stops = 0, walks = 0;
+    for (let p = 0; p < 120; p++) {
+      const r = compare(withModel(walkCfg(p), model)).runwave;
+      stops += r.stops;
+      walks += r.walkCount;
+    }
+    assert.equal(stops, 0, model);
+    assert.ok(walks > 0, model);
+  }
+});
+
+test('早歩き：速さは常に 5.3〜5.8km/h、歩/分は式どおり、横断地点では「横断時間＋終了前の余裕」以上の青が残る', () => {
+  for (let p = 0; p < 120; p++) {
+    const cfg = walkCfg(p);
+    const tr = trace(cfg);
+    for (let i = 1; i < tr.length; i++) {
+      const [a, b] = [tr[i - 1], tr[i]];
+      if (b.gait === 'walk') {
+        assert.ok(b.targetSpeedKmh >= 5.3 - 1e-9 && b.targetSpeedKmh <= 5.8 + 1e-9, `位相${p}`);
+        near(b.bpm, b.targetSpeedKmh / 3.6 * 60 / 0.75, 1e-3);
+        near(b.speedMps, b.targetSpeedKmh / 3.6, 1e-9);
+      }
+      if (a.phase === 'approach' && b.phase !== 'approach' && a.gait === 'walk' && b.stops === a.stops) {
+        const v = a.targetSpeedKmh / 3.6;
+        const at = a.t + (cfg.route.crossingX - a.x) / v;
+        const sig = signalAt(cfg.signal, at);
+        assert.equal(sig.color, 'green', `位相${p}`);
+        assert.ok(sig.remainingS >= 15 / v + 5 - 1e-3, `位相${p}: 青の残り ${sig.remainingS}`);
+      }
+    }
+  }
+});
+
+test('早歩き：走りの部分は ±20・4秒/2BPM を守る（例外は 走り→早歩き・早歩き→走り・再開 だけ）。非青では通過しない', () => {
+  for (let p = 0; p < 120; p += 2) {
+    const cfg = walkCfg(p);
+    const tr = trace(cfg);
+    for (let i = 1; i < tr.length; i++) {
+      const [a, b] = [tr[i - 1], tr[i]];
+      if (a.phase === 'approach' && b.x > cfg.route.crossingX) {
+        const v = a.gait === 'walk' ? a.targetSpeedKmh / 3.6 : 0.8 * b.bpm / 60;
+        assert.equal(signalAt(cfg.signal, a.t + (cfg.route.crossingX - a.x) / v).color, 'green', `位相${p}`);
+      }
+      if (a.gait === 'walk' || b.gait === 'walk' || b.phase === 'waiting') continue;
+      assert.ok(b.bpm >= 130 && b.bpm <= 170);
+      if (a.phase === 'waiting' || b.stops > a.stops || a.bpm === b.bpm) continue;
+      assert.equal(a.tick % 40, 0, `位相${p} t=${a.t}`);
+      assert.ok(Math.abs(b.bpm - a.bpm) <= 2);
+    }
+  }
+});
+
+test('早歩き：横断を渡り終えたら通常BPMの走りに戻る。集計（回数・時間・距離）が合う', () => {
+  for (const p of [0, 5, 110]) {
+    const tr = trace(walkCfg(p));
+    const last = tr.at(-1);
+    assert.equal(last.walkCount, 1);
+    assert.equal(last.gait, 'run');
+    const lastWalk = tr.findLastIndex((s) => s.gait === 'walk');
+    assert.equal(tr[lastWalk + 1].bpm, 150);
+    assert.ok(tr[lastWalk + 1].x >= 400 + 15 - 1e-6);
+    // 平均の速さが早歩きの範囲に入る
+    const avg = last.walkDistanceM / last.walkTimeS * 3.6;
+    assert.ok(avg >= 5.3 - 1e-3 && avg <= 5.8 + 1e-3, `位相${p}: 平均 ${avg}`);  // 時間・距離の丸め（小数6桁）の誤差を許す
+    assert.ok(last.walkDistanceM >= 15);
+    assert.ok(last.walkMinBpm >= 117.7 && last.walkMaxBpm <= 129);
+  }
+});
+
+test('早歩き：走りだけで間に合う位相（停止推奨にならない）では、結果が今と同じ', () => {
+  for (let p = 0; p < 120; p++) {
+    const plain = trace(withPhase(W400, p));
+    if (plain.some((s) => s.mode === 'stopRecommended')) continue;
+    const a = compare(withPhase(W400, p)).runwave;
+    const { walkCount, walkTimeS, walkDistanceM, walkMinBpm, walkMaxBpm, ...b } = compare(walkCfg(p)).runwave;
+    assert.deepEqual(b, a, `位相${p}`);
+    assert.equal(walkCount, 0);
+  }
+});
+
+test('早歩き：通常走行（制御OFF）は早歩きにならない。同じ入力なら同じ結果', () => {
+  for (let p = 0; p < 120; p += 5) {
+    const off = withEnabled(walkCfg(p), false);
+    for (const s of trace(off)) assert.equal(s.gait, 'run');
+    assert.deepEqual(simulate(walkCfg(p)), simulate(structuredClone(walkCfg(p))));
+  }
+});
+
+test('早歩きのシナリオ W：走りだけでは35秒止まるが、早歩きでつないで止まらない', () => {
+  const c = SCENARIOS_WALK.W;
+  const runOnly = compare(withControl(c, { walk: { enabled: false } })).runwave;
+  const { normal, runwave } = compare(c);
+  assert.equal(normal.stops, 1);
+  assert.equal(runOnly.stops, 1);
+  near(runOnly.stopTimeS, 35);
+  assert.equal(runwave.stops, 0);
+  assert.equal(runwave.walkCount, 1);
 });

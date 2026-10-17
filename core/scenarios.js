@@ -40,3 +40,15 @@ export const DEMO_800M = {
   main: SCENARIOS_800M.B,
   sub: SCENARIOS_800M.A,
 };
+
+// ---------- 早歩きフェーズの比較シナリオ（v0.4.0・未合意） ----------
+// 今のデモと同じ 400m・余裕3/5秒・横断長15m で、走りだけでは止まる位相に早歩きを有効にした例。
+// 既存の SCENARIOS / DEMO は変えない（ダッシュボードが対応してから切り替える）
+const baseWalk = {
+  runner: { strideM: 0.8, baseBpm: 150, walkStrideM: 0.75 },
+  route: { crossingX: 400, goalX: 600 },
+  control: { startMarginS: 3, endMarginS: 5, maxDeltaBpm: 20, stepBpm: 2, stepIntervalS: 4, targetIntervalS: 1, walk: { enabled: true } },
+};
+export const SCENARIOS_WALK = {
+  W: { ...baseWalk, signal: signal(5, 15) },   // 走りだけでは止まる（30通りのうちの1つ）→ 早歩きでつなぐ
+};

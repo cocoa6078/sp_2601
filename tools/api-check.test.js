@@ -90,3 +90,10 @@ test('api-check: つながらない URL はエラーとして記録し、例外�
   assert.equal(rep.results[0].ok, false);
   assert.ok(rep.results[0].problems[0]);
 });
+
+test('extractRunner: バックエンドが保存後に返す NormalBPM と、早歩きの歩幅 walkStrideM も読む', () => {
+  assert.deepEqual(extractRunner({ 'ステータス': '成功', 'データ': { '歩幅': 0.85, 'NormalBPM': 160, walkStrideM: 0.75 } }).runner,
+    { strideM: 0.85, baseBpm: 160, walkStrideM: 0.75 });
+  assert.deepEqual(extractRunner({ '歩幅': 0.8, '通常BPM': 150 }).runner, { strideM: 0.8, baseBpm: 150 });  // walkStrideM は任意
+  assert.equal(extractRunner({ '歩幅': 0.8, '通常BPM': 150, walkStrideM: -1 }).runner, null);
+});
