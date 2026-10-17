@@ -1,0 +1,11 @@
+{
+  "name": "runwave",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test \"core/*.test.js\" \"tools/*.test.js\"",
+    "scenarios": "node core/run-scenarios.js",
+    "api-check": "node tools/api-check.js",
+    "mock-api": "node tools/mock-server.js"
+  }
+}

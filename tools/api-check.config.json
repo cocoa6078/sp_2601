@@ -1,0 +1,24 @@
+{
+  "_comment": "バックエンド・API連携ガイド（10/17版） に合わせた設定。read=GET（常に実行）、write=POST（--write のときだけ）。expect は期待するステータスの種類（2xx / 4xx）",
+  "timeoutMs": 10000,
+  "checks": [
+    { "id": "signals", "kind": "read", "method": "GET", "path": "/api/signals", "expect": "2xx", "use": "signals" },
+    { "id": "calibration-get", "kind": "read", "method": "GET", "path": "/api/calibration", "expect": "2xx", "use": "runner" },
+    { "id": "logs-get", "kind": "read", "method": "GET", "path": "/api/logs", "expect": "2xx" },
+    { "id": "not-found", "kind": "read", "method": "GET", "path": "/api/__runwave_check_not_found__", "expect": "4xx" },
+
+    { "id": "calibration-post-ok", "kind": "write", "method": "POST", "path": "/api/calibration",
+      "body": { "歩幅": 0.8, "通常BPM": 150 }, "expect": "2xx" },
+    { "id": "calibration-post-nobody", "kind": "write", "method": "POST", "path": "/api/calibration", "noBody": true, "expect": "4xx" },
+    { "id": "calibration-post-empty", "kind": "write", "method": "POST", "path": "/api/calibration", "body": {}, "expect": "4xx" },
+    { "id": "calibration-post-negative", "kind": "write", "method": "POST", "path": "/api/calibration",
+      "body": { "歩幅": -0.8, "通常BPM": 150 }, "expect": "4xx" },
+    { "id": "calibration-post-string", "kind": "write", "method": "POST", "path": "/api/calibration",
+      "body": { "歩幅": "abc", "通常BPM": 150 }, "expect": "4xx" },
+    { "id": "calibration-post-badjson", "kind": "write", "method": "POST", "path": "/api/calibration", "rawBody": "{not json", "expect": "4xx" },
+
+    { "id": "logs-post-ok", "kind": "write", "method": "POST", "path": "/api/logs",
+      "body": { "シナリオ": "API結合確認（core担当・消してよい）", "停止回数": 0, "総所要時間": 0 }, "expect": "2xx" },
+    { "id": "logs-post-nobody", "kind": "write", "method": "POST", "path": "/api/logs", "noBody": true, "expect": "4xx" }
+  ]
+}
