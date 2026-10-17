@@ -4,7 +4,7 @@
 // POST は実装しない（設定・ログを書き込まない）。
 import { core, adapterNs } from './core-ns.js';
 
-export const DEFAULT_API_BASE = 'http://localhost:3001';
+export const DEFAULT_API_BASE = 'https://sp2601.vercel.app';
 export const DEFAULT_TIMEOUT_MS = 5000;
 
 export const ENDPOINTS = [

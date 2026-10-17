@@ -1,0 +1,68 @@
+name: Deploy web apps to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            frontend/web-simulator/package-lock.json
+            frontend/dev-dashboard/package-lock.json
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Build web simulator
+        working-directory: frontend/web-simulator
+        run: |
+          npm ci
+          npm run build -- --config vite.config.pages.js
+
+      - name: Build development dashboard
+        working-directory: frontend/dev-dashboard
+        run: |
+          npm ci
+          npm run build -- --config vite.config.pages.js
+
+      - name: Assemble Pages site
+        run: |
+          mkdir -p "$RUNNER_TEMP/pages/web-simulator" "$RUNNER_TEMP/pages/dev-dashboard"
+          cp -R frontend/web-simulator/dist/. "$RUNNER_TEMP/pages/web-simulator/"
+          cp -R frontend/dev-dashboard/dist/. "$RUNNER_TEMP/pages/dev-dashboard/"
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ runner.temp }}/pages
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
