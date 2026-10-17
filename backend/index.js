@@ -8,29 +8,52 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// ---------------------------------------------------------
+// 1. データストア (全データおよびデモ用抽出データの準備)
+// ---------------------------------------------------------
 let signalsData = [];
+let allSignalsDataF02 = [];
 
-// ---------------------------------------------------------
-// 1. データストア (全北海道の統合データから特定ルートを抽出)
-// ---------------------------------------------------------
 try {
-  // 修正: CSVtoDataset フォルダ内の hokkaido_all_signals.json を参照
-  const filePath = path.join(__dirname, 'CSVtoDataset', 'hokkaido_all_signals.json');
-  const rawData = fs.readFileSync(filePath, 'utf-8');
-  const allHokkaidoData = JSON.parse(rawData);
-  
-  // デモ対象の札幌駅〜すすきの間（交差点番号: 3, 8, 2, 1, 5）のみを抽出
+  // 全データの読み込み
+  const fullDataPath = path.join(__dirname, 'CSVtoDataset', 'hokkaido_all_signals.json');
+  const fullRawData = fs.readFileSync(fullDataPath, 'utf-8');
+  const allHokkaidoData = JSON.parse(fullRawData);
+
+  // 【P2拡張用】全データをF-02フォーマットへ変換（マップ描画などに利用）
+  allSignalsDataF02 = allHokkaidoData.map(signal => {
+    const greenS = Math.max(0, signal["青信号時間"] - 5); 
+    const yellowS = 5;
+    const redS = signal["赤信号時間"];
+    const cycleS = greenS + yellowS + redS; 
+
+    return {
+      signalId: `hokkaido_${signal["地域"]}_${signal["交差点番号"]}`,
+      region: signal["地域"],
+      lat: signal["緯度"],
+      lon: signal["経度"],
+      cycleS: cycleS,
+      greenS: greenS,
+      yellowS: yellowS,
+      redS: redS,
+      phaseS: 0,
+      crossingM: 15.0,
+      note: "※JARTICビッグデータ抽出分"
+    };
+  });
+  console.log(`✅ 全データロード成功: ${allSignalsDataF02.length}件のF-02変換完了`);
+
+  // 【P0デモ用】札幌駅〜すすきの間（交差点番号: 3, 8, 2, 1, 5）の抽出
   const targetIds = [3, 8, 2, 1, 5];
-  
   const filteredData = allHokkaidoData.filter(signal => 
     signal["地域"] === "札幌方面" && targetIds.includes(signal["交差点番号"])
   );
 
-  // 指定された順番(3 -> 8 -> 2 -> 1 -> 5)に並び替え
+  // 指定順序 (3 -> 8 -> 2 -> 1 -> 5) でソート
   const orderMap = { 3: 1, 8: 2, 2: 3, 1: 4, 5: 5 };
   filteredData.sort((a, b) => orderMap[a["交差点番号"]] - orderMap[b["交差点番号"]]);
 
-  // B1: 信号データを仕様F-02の形に変換
+  // デモ用配列の生成
   signalsData = filteredData.map(signal => {
     const greenS = Math.max(0, signal["青信号時間"] - 5); 
     const yellowS = 5;
@@ -44,94 +67,104 @@ try {
       yellowS: yellowS,
       redS: redS,
       phaseS: 0,         
-      crossingM: 15.0,
-      note: "※JARTIC由来の参考プリセット"
+      crossingM: 15.0,   
+      note: "※JARTIC由来の参考プリセット（車両用データ流用）" // ← 「車両用データ流用」を復元
     };
   });
-  
-  console.log(`✅ データロード成功: hokkaido_all_signals.json からデモ用 ${signalsData.length} 件を抽出しました。`);
+  console.log(`✅ デモ用データ準備完了: ${signalsData.length} 件抽出`);
 } catch (error) {
-  console.error("❌ データの読み込みに失敗しました。パスを確認してください:", error.message);
+  console.error("❌ データの読み込みに失敗しました:", error.message);
 }
 
+// キャリブレーションとログのインメモリ保存用変数
 let userCalibrationData = { 歩幅: 0.8, 通常BPM: 150 };
 let runLogs = [];
 
 // ---------------------------------------------------------
-// 2. API エンドポイント (変更なし)
+// 2. API エンドポイント
 // ---------------------------------------------------------
+
+// [GET] デモ用データ取得
 app.get('/api/signals', (req, res) => {
   res.status(200).json({ ステータス: "成功", データ: signalsData });
 });
 
+// [GET] 拡張用：全データ取得
+app.get('/api/signals/all', (req, res) => {
+  res.status(200).json({
+    ステータス: "成功",
+    総件数: allSignalsDataF02.length,
+    データ: allSignalsDataF02
+  });
+});
+
+// [GET] 拡張用：地域別データ取得（例: /api/signals/region/函館方面）
+app.get('/api/signals/region/:region', (req, res) => {
+  const targetRegion = req.params.region;
+  const filtered = allSignalsDataF02.filter(s => s.region === targetRegion);
+  
+  if (filtered.length === 0) {
+    return res.status(404).json({ ステータス: "エラー", メッセージ: "該当地域のデータがありません" });
+  }
+  res.status(200).json({ ステータス: "成功", 地域: targetRegion, 件数: filtered.length, データ: filtered });
+});
+
+// [POST] キャリブレーションの保存
 app.post('/api/calibration', (req, res) => {
   const body = req.body ?? {};
   const { 歩幅, 通常BPM } = body;
+  
+  // バリデーションチェック
   if (typeof 歩幅 !== 'number' || 歩幅 <= 0 || typeof 通常BPM !== 'number' || 通常BPM <= 0) {
-    return res.status(400).json({ ステータス: "エラー", メッセージ: "歩幅と通常BPMは正の数値である必要があります。" });
+    return res.status(400).json({ ステータス: "エラー", メッセージ: "正の数値を入力してください" });
   }
   userCalibrationData = { 歩幅, 通常BPM };
   res.status(200).json({ ステータス: "成功", データ: userCalibrationData });
 });
 
+// [GET] キャリブレーションの取得
 app.get('/api/calibration', (req, res) => {
   res.status(200).json({ ステータス: "成功", データ: userCalibrationData });
 });
 
+// [POST] 走行ログの保存
 app.post('/api/logs', (req, res) => {
   const logData = req.body ?? {};
+  // 空リクエストの除外
   if (Object.keys(logData).length === 0) {
-    return res.status(400).json({ 
-      ステータス: "エラー", 
-      メッセージ: "ログデータが空です。" 
-    });
+    return res.status(400).json({ ステータス: "エラー", メッセージ: "データが空です" });
   }
-
-  const newLog = { 時刻: new Date().toISOString(), ...logData };
-  runLogs.push(newLog);
-
-  res.status(201).json({
-    ステータス: "成功",
-    総ログ数: runLogs.length
-  });
+  runLogs.push({ 時刻: new Date().toISOString(), ...logData });
+  res.status(201).json({ ステータス: "成功", 総ログ数: runLogs.length });
 });
 
+// [GET] 走行ログ一覧の取得
 app.get('/api/logs', (req, res) => {
   res.status(200).json({ ステータス: "成功", データ: runLogs });
 });
 
-app.get('/api/signals/all', (req, res) => {
-  try {
-    const rawData = fs.readFileSync(path.join(__dirname, 'CSVtoDataset', 'hokkaido_all_signals.json'), 'utf-8');
-    res.status(200).json({ ステータス: "成功", 総件数: 384, データ: JSON.parse(rawData) });
-  } catch (error) {
-    res.status(500).json({ ステータス: "エラー", メッセージ: "全データ取得失敗" });
-  }
-});
+// ---------------------------------------------------------
+// 3. エラーハンドリング
+// ---------------------------------------------------------
 
+// 404 エラーハンドリング
 app.use((req, res, next) => {
-  res.status(404).json({ 
-    ステータス: "エラー", 
-    メッセージ: "指定されたエンドポイントは見つかりません" 
-  });
+  res.status(404).json({ ステータス: "エラー", メッセージ: "指定されたエンドポイントは見つかりません" });
 });
 
-// グローバルエラーハンドリング (壊れたJSONなどのパースエラー時もJSONを返す) (イシュー11対応)
+// グローバルエラーハンドリング（JSONパース失敗等）
 app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
-    return res.status(400).json({ 
-      ステータス: "エラー", 
-      メッセージ: "無効なJSONフォーマットです" 
-    });
+    return res.status(400).json({ ステータス: "エラー", メッセージ: "無効なJSONフォーマットです" });
   }
-  res.status(err.status || 500).json({ 
-    ステータス: "エラー", 
-    メッセージ: "リクエストを処理できませんでした" 
-  });
+  res.status(err.status || 500).json({ ステータス: "エラー", メッセージ: "サーバーエラーが発生しました" });
 });
 
+// ---------------------------------------------------------
+// 4. サーバー起動
+// ---------------------------------------------------------
 const PORT = process.env.PORT || 3001; 
 app.listen(PORT, () => {
-  console.log(`🚀 RUNWAVE Backend サーバーがポート ${PORT} で起動しました。`);
+  console.log(`🚀 RUNWAVE Backend サーバー起動完了 (ポート: ${PORT})`);
 });
 module.exports = app;
