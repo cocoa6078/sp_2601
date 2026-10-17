@@ -73,6 +73,11 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		7A9D42C32F1A48C5B01C092E /* Shared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Shared;
+			sourceTree = "<group>";
+		};
 		D6D331F43082F5E10053A965 /* Runwave */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = Runwave;
@@ -154,6 +159,7 @@
 		D6D331E93082F5E10053A965 = {
 			isa = PBXGroup;
 			children = (
+				7A9D42C32F1A48C5B01C092E /* Shared */,
 				D6D331F43082F5E10053A965 /* Runwave */,
 				D6D332023082F5E30053A965 /* RunwaveTests */,
 				D6D3320C3082F5E30053A965 /* RunwaveUITests */,
@@ -196,6 +202,7 @@
 				D6D332263082F6680053A965 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
+				7A9D42C32F1A48C5B01C092E /* Shared */,
 				D6D331F43082F5E10053A965 /* Runwave */,
 			);
 			name = Runwave;
@@ -281,6 +288,7 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
+				7A9D42C32F1A48C5B01C092E /* Shared */,
 				D6D332273082F6680053A965 /* Runwave watch Watch App */,
 			);
 			name = "Runwave watch Watch App";
@@ -650,6 +658,8 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "歩幅測定のために歩行距離を測ります。";
+				INFOPLIST_KEY_NSMotionUsageDescription = "歩幅測定のために歩数を数えます。";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -693,6 +703,8 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "歩幅測定のために歩行距離を測ります。";
+				INFOPLIST_KEY_NSMotionUsageDescription = "歩幅測定のために歩数を数えます。";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
