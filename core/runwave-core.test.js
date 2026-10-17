@@ -56,7 +56,7 @@ test('不正な入力は RangeError（NaN・Infinity・null・周期不整合）
 
 test('不正な control・dt を拒否する', () => {
   for (const bad of [
-    { stepIntervalS: 0 }, { stepIntervalS: 0.05 }, { stepBpm: NaN }, { maxDeltaBpm: null },
+    { stepIntervalS: 0 }, { stepIntervalS: 0.05 }, { stepBpm: NaN }, { maxDeltaBpm: null }, { horizonS: null },
     { startMarginS: Infinity }, { targetIntervalS: -1 }, { enabled: 'yes' }, { crossingModel: 'zone' },
   ]) assert.throws(() => validateConfig(withControl(SCENARIOS.A, bad)), RangeError, JSON.stringify(bad));
   assert.throws(() => validateConfig({ ...SCENARIOS.A, dt: 0.05 }), RangeError);

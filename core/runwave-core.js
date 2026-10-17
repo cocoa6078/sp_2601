@@ -27,7 +27,9 @@ export const DEFAULT_CONTROL = {
   stepBpm: 2,          // 1回の変更量の上限
   stepIntervalS: 4,    // BPM を変えられる間隔（変更は t = 4k 秒のときだけ）
   targetIntervalS: 1,  // 目標BPMを再計算する間隔
-  // 予測の範囲は固定せず、横断地点までの距離から決める（最も遅い候補でも必ず到着まで予測する）
+  // 予測の範囲は横断地点までの距離から決める（最も遅い候補でも到着まで予測する）。
+  // horizonS はその上限（計算の打ち切り）。既定は十分長く、通常の距離では効かない（v0.2.0 以前の 240 秒固定は廃止）
+  horizonS: 3600,
 };
 
 // ---------- 入力検証 ----------
@@ -65,6 +67,7 @@ export function validateConfig(config) {
   need(isNonNeg(c.startMarginS) && isNonNeg(c.endMarginS), 'control の余裕秒数は0以上の数');
   need(isNonNeg(c.maxDeltaBpm) && isPos(c.stepBpm), 'control.maxDeltaBpm は0以上、stepBpm は正の数');
   need(isTickMultiple(c.stepIntervalS) && isTickMultiple(c.targetIntervalS), `stepIntervalS・targetIntervalS は ${DT} 秒の倍数の正の数`);
+  need(isPos(c.horizonS), 'control.horizonS（予測の上限）は正の数');
   need(r.baseBpm - c.maxDeltaBpm > 0, '通常BPM − maxDeltaBpm は正である必要があります');
   need(route.goalX > route.crossingX + crossingLength(config), 'goalX は横断の先（crossingX + 横断長 より先）');
   return true;
@@ -189,7 +192,8 @@ function predictArrival(state, config, c, ctl) {
   const { crossingX } = config.route;
   const target = clamp(c, ctl.baseLow, ctl.baseHigh);
   let tick = state.tick, x = state.x, bpm = state.bpm;
-  const limit = tick + Math.ceil(((crossingX - x) / speedOf(strideM, ctl.baseLow)) * TPS) + 2 * TPS;
+  const byDistance = Math.ceil(((crossingX - x) / speedOf(strideM, ctl.baseLow)) * TPS) + 2 * TPS;
+  const limit = tick + Math.min(byDistance, Math.ceil(ctl.horizonS * TPS));
   while (tick < limit) {
     if (tick !== 0 && tick % ctl.intervalTicks === 0) bpm += clamp(target - bpm, -ctl.stepBpm, ctl.stepBpm);
     bpm = clamp(bpm, ctl.baseLow, ctl.baseHigh);

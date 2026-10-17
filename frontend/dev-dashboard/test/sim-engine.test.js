@@ -205,7 +205,7 @@ test('結果の読み方: 停止回避と所要時間の差を別々に示し、
   const a = describeResult(expectedFor('A'));
   assert.equal(a.avoided, true);
   assert.match(a.stopLine, /停止回避/);
-  assert.match(a.timeLine, /\+5\.0 秒・遅い/);
+  assert.match(a.timeLine, /\+\d+\.\d 秒・遅い/);  // 数値は core の版で変わる（v0.3.0 で +4.6 秒）
   const b = describeResult(expectedFor('B'));
   assert.equal(b.avoided, true);
   assert.match(b.timeLine, /短縮/);

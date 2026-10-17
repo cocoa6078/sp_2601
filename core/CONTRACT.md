@@ -18,7 +18,7 @@
   runner:  { strideM: 0.8, baseBpm: 150 },
   route:   { crossingX: 400, goalX: 600 },
   control: { enabled: true, crossingModel: 'point', startMarginS: 3, endMarginS: 5,
-             maxDeltaBpm: 20, stepBpm: 2, stepIntervalS: 4, targetIntervalS: 1 },
+             maxDeltaBpm: 20, stepBpm: 2, stepIntervalS: 4, targetIntervalS: 1, horizonS: 3600 },
 }
 ```
 
@@ -33,6 +33,7 @@
 ### 入力検証 ✅（不正なら RangeError）
 - 数値は有限（NaN・Infinity・null を拒否）。周期は正、各区間は0以上、`greenS+yellowS+redS` と `cycleS` の差が 1e-9 未満
 - `dt` を渡すなら 0.1 のみ。`stepIntervalS`・`targetIntervalS` は 0.1 秒の倍数の正の数
+- `horizonS` は予測の上限（計算の打ち切り、既定3600秒）。予測範囲は横断地点までの距離から決めるので、既定のままでは効かない（v0.2.0 以前の「240秒先まで」の意味ではない）
 - `crossingModel` は `point` / `length`、`enabled` は true/false、余裕は0以上
 - `goalX > crossingX + 横断長`（point では横断長0）、`baseBpm − maxDeltaBpm > 0`
 - `signalAt`・`safeGreenWindows`・`requiredBpm`・`calibrate`・`simulate` も引数を検証する

@@ -17,16 +17,17 @@ export const REQUIRED_ADAPTER_EXPORTS = ['extractSignals', 'extractRunner', 'unw
 /** ダッシュボードが使っている core の export（一覧で「使用中」にする） */
 export const USED_CORE_EXPORTS = [...new Set([...Object.values(REQUIRED_EXPORTS).flat(), ...OPTIONAL_EXPORTS])];
 /** v0.2.0 時点で存在するが、ダッシュボードは使っていない export（新規ではない未使用） */
-export const KNOWN_UNUSED_CORE_EXPORTS = ['calibrate', 'canEnter', 'chooseTarget', 'limitRate', 'requiredBpm', 'safeGreenWindows', 'simulate', 'MODES', 'COLOR_LABELS'];
+export const KNOWN_UNUSED_CORE_EXPORTS = ['calibrate', 'canEnter', 'chooseTarget', 'limitRate', 'requiredBpm', 'safeGreenWindows', 'simulate', 'MODES', 'COLOR_LABELS', 'REASONS'];
 
 /** createRun / step の state に必要な項目 */
 export const REQUIRED_STATE_KEYS = ['tick', 't', 'x', 'bpm', 'targetBpm', 'mode', 'phase', 'stops', 'stopTimeS', 'stoppedAtT', 'finished', 'finishTimeS'];
 /** ダッシュボードが意味を知っている state の項目（これ以外は「新しい項目」） */
-export const KNOWN_STATE_KEYS = [...REQUIRED_STATE_KEYS, 'signal', 'minBpm', 'maxBpm', 'totalBpmChange', 'history'];
+// core v0.3.0 で reason（目標の理由）とリズムの指標が追加された
+export const KNOWN_STATE_KEYS = [...REQUIRED_STATE_KEYS, 'signal', 'minBpm', 'maxBpm', 'totalBpmChange', 'history', 'reason', 'deviationBpmS', 'offBaseTimeS', 'runStartT', 'longestRunS'];
 /** summarize の結果に必要な項目 */
 export const REQUIRED_SUMMARY_KEYS = ['finished', 'stops', 'stopTimeS', 'totalTimeS'];
 /** ダッシュボードが意味を知っている summary の項目（これ以外は「その他の集計」） */
-export const KNOWN_SUMMARY_KEYS = ['enabled', 'crossingModel', 'finished', 'termination', 'stops', 'stopTimeS', 'totalTimeS', 'minBpm', 'maxBpm', 'totalBpmChange', 'baseBpm'];
+export const KNOWN_SUMMARY_KEYS = ['enabled', 'crossingModel', 'finished', 'termination', 'stops', 'stopTimeS', 'totalTimeS', 'minBpm', 'maxBpm', 'totalBpmChange', 'deviationBpmS', 'offBaseTimeS', 'longestRunS', 'baseBpm'];
 
 // 契約チェックで createRun / step を試すときの最小の config（シナリオが取れなかったときだけ使う）
 const PROBE_CONFIG = {
