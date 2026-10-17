@@ -156,3 +156,22 @@ test('チェックリストの保存: localStorage 相当に保存して読み�
   assert.equal(saveChecklist(broken, list), false);
   assert.deepEqual(loadChecklist(undefined), defaultChecklist());
 });
+
+test('report: ダッシュボードが知らない集計は「その他の集計」に、契約が崩れているときは未確認事項に入る', () => {
+  const pair = finishedPair('A');
+  const summary = pairSummary(pair);
+  summary.runwave = { ...summary.runwave, energyKcal: 12.5 };
+  const r = buildReport({
+    config: pair.config, tick: pair.tick, summary, description: describeResult(summary), verification: verifyPair(pair),
+    contract: { ok: false, missing: ['step（関数）', 'state.phase'], warnings: [], problems: [] },
+  });
+  assert.deepEqual(r.results.otherSummary, [{ key: 'energyKcal', normal: '（なし）', runwave: '12.5' }]);
+  const md = reportToMarkdown(r);
+  assert.ok(md.includes('その他の集計'));
+  assert.ok(md.includes('| energyKcal | （なし） | 12.5 |'));
+  assert.match(r.unconfirmed.join('\n'), /core の契約が変わっている（不足: step（関数）、state\.phase）/);
+  assert.equal(r.coreContract.ok, false);
+  // 契約が正常なら、その項目は出ない
+  const ok = buildReport({ config: pair.config, summary: pairSummary(pair), contract: { ok: true, missing: [], warnings: [], problems: [] } });
+  assert.doesNotMatch(ok.unconfirmed.join('\n'), /契約が変わっている/);
+});

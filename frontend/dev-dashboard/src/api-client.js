@@ -2,8 +2,7 @@
 // 変換と形式検証は core/api-adapter.js の関数を再利用する。tools/api-check.js の judge の考え方を移植したが、
 // CLI のコード（node:fs などを読む）はブラウザに持ち込まない。
 // POST は実装しない（設定・ログを書き込まない）。
-import { validateConfig, validateSignal } from '../../../core/runwave-core.js';
-import { extractSignals, extractRunner, unwrap } from '../../../core/api-adapter.js';
+import { core, adapterNs } from './core-ns.js';
 
 export const DEFAULT_API_BASE = 'http://localhost:3001';
 export const DEFAULT_TIMEOUT_MS = 5000;
@@ -31,13 +30,13 @@ function validateBody(endpointId, json) {
   let summary = '';
 
   if (endpointId === 'signals') {
-    const items = extractSignals(json);
+    const items = adapterNs.extractSignals(json);
     const list = [];
     for (const it of items) {
       const itemProblems = [...it.problems];
       if (it.signal) {
         try {
-          validateSignal(it.signal); // core が受け付けない値（負の周期など）
+          core.validateSignal(it.signal); // core が受け付けない値（負の周期など）
         } catch (e) {
           itemProblems.push(`core が受け付けない: ${e.message}`);
         }
@@ -55,12 +54,12 @@ function validateBody(endpointId, json) {
     data = { signals: list };
     summary = `信号 ${valid.length} 件が使える${invalid.length ? `（不正 ${invalid.length} 件）` : ''}`;
   } else if (endpointId === 'calibration') {
-    const r = extractRunner(json);
+    const r = adapterNs.extractRunner(json);
     if (!r.runner) problems.push(...r.problems.filter(notStatusProblem));
     data = { runner: r.runner };
     summary = r.runner ? `歩幅 ${r.runner.strideM} m・通常 ${r.runner.baseBpm} 歩/分` : '';
   } else if (endpointId === 'logs') {
-    const u = unwrap(json);
+    const u = adapterNs.unwrap(json);
     if (!Array.isArray(u.data)) problems.push('データが配列ではない');
     else summary = `ログ ${u.data.length} 件`;
     data = { count: Array.isArray(u.data) ? u.data.length : null };
@@ -146,7 +145,13 @@ export async function checkEndpoint(base, endpoint, { fetchImpl = (...args) => g
     }
     // HTTP が 2xx でも形式検証は必ず行う（空信号・不正値を「利用可能」にしないため）。2xx 以外は理由が明らかなので省く
     if (is2xx) {
-      const v = validateBody(endpoint.id, json);
+      let v;
+      try {
+        v = validateBody(endpoint.id, json);
+      } catch (e) {
+        // core / api-adapter の契約が変わった場合など。例外で止めず、失敗として理由を出す
+        v = { problems: [`形式の検証中に例外: ${e.message}（core / api-adapter の契約が変わった可能性）`], warnings: [], data: null, summary: '' };
+      }
       result.problems.push(...v.problems);
       result.warnings.push(...v.warnings);
       result.data = v.data;
@@ -177,7 +182,7 @@ export function overallStatus(results) {
 export function applyApiSignal(config, signal) {
   const next = { ...config, signal: { ...config.signal, ...signal } };
   try {
-    validateConfig(next);
+    core.validateConfig(next);
   } catch (e) {
     return { error: `この信号は現在の条件では使えません: ${e.message}` };
   }

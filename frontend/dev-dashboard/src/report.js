@@ -3,6 +3,7 @@
 // API 確認結果・再現手順・メモ・未確認事項を 1 つにまとめる。
 import { CHECK_STATUS_LABELS } from './checklist.js';
 import { STATUS_LABELS } from './api-client.js';
+import { extraSummaryRows } from './core-compat.js';
 
 const MAX_TIME_S = 1800; // core.simulate の既定 maxTimeS
 export const REPORT_SCHEMA = 'runwave-dev-dashboard-report/1';
@@ -34,11 +35,12 @@ export function reproductionSteps({ source, scenarioId, apiBase }) {
 }
 
 /** 本画面では確認できないこと・まだ確認していないこと（自動で入れる） */
-export function unconfirmedItems({ meta, summary, verification, apiOverall, checklist, source }) {
+export function unconfirmedItems({ meta, summary, verification, apiOverall, checklist, source, contract }) {
   const out = [
     'Mac での Xcode ビルド、SwiftUI の表示・動作、Watch 連携、実機動作は本画面では確認できない（Web での再現であり、SwiftUI の互換性確認ではない）',
     '数値は架空信号・固定歩幅によるシミュレーションの推定値。実信号、HealthKit、WatchConnectivity、心拍による制御は今回の対象外',
   ];
+  if (contract && !contract.ok) out.push(`core の契約が変わっている（不足: ${contract.missing.join('、')}）。dashboard の更新が必要で、この結果は一部の機能が無効な状態のもの`);
   if (!meta?.gitSha) out.push('Git SHA が不明（取得できなかった）');
   out.push('未コミット変更の有無は記録していない（SHA だけで完全に再現できるとは限らない）');
   if (!summary || !summary.normal.finished || !summary.runwave.finished) out.push('両レーンのゴールまで実行していない（結果は途中経過）');
@@ -72,7 +74,7 @@ const apiEntry = (r) => ({
  *        apiBase, apiResults, apiOverall, checklist, memo }
  */
 export function buildReport(input) {
-  const { now = new Date(), env = {}, meta = {}, coreVersion, source, scenarioId, config, tick = 0, summary = null, description = null, verification = null, apiBase = null, apiResults = [], apiOverall = 'unchecked', checklist = [], memo = '' } = input;
+  const { now = new Date(), env = {}, meta = {}, coreVersion, source, scenarioId, config, tick = 0, summary = null, description = null, verification = null, apiBase = null, apiResults = [], apiOverall = 'unchecked', checklist = [], memo = '', contract = null } = input;
   const done = !!summary && summary.normal.finished && summary.runwave.finished;
   return {
     schema: REPORT_SCHEMA,
@@ -97,6 +99,7 @@ export function buildReport(input) {
           stopAvoidance: description?.stopLine ?? null,
           timeDifference: description?.timeLine ?? null,
           timeDifferenceS: description?.timeDiffS ?? null,
+          otherSummary: extraSummaryRows(summary), // ダッシュボードが意味を知らない集計（core に増えたもの）
         }
       : null,
     verification: verification
@@ -118,7 +121,8 @@ export function buildReport(input) {
     },
     reproduction: reproductionSteps({ source, scenarioId, apiBase }),
     memo: memo ?? '',
-    unconfirmed: unconfirmedItems({ meta, summary, verification, apiOverall, checklist, source }),
+    coreContract: contract ? { ok: contract.ok, missing: contract.missing, warnings: contract.warnings, problems: contract.problems } : null,
+    unconfirmed: unconfirmedItems({ meta, summary, verification, apiOverall, checklist, source, contract }),
   };
 }
 
@@ -162,6 +166,11 @@ export function reportToMarkdown(r) {
       L.push(`| ${name} | ${ca} | ${cb} |`);
     }
     L.push('');
+    if (r.results.otherSummary?.length) {
+      L.push('その他の集計（ダッシュボードが意味を知らない項目。core に追加されたもの）', '', '| 項目 | 通常走行 | RUNWAVE |', '|---|---|---|');
+      for (const e of r.results.otherSummary) L.push(`| ${cell(e.key)} | ${cell(e.normal)} | ${cell(e.runwave)} |`);
+      L.push('');
+    }
     if (r.results.stopAvoidance) L.push(`- ${r.results.stopAvoidance}`);
     if (r.results.timeDifference) L.push(`- ${r.results.timeDifference}`);
     L.push('');

@@ -3,7 +3,7 @@
 // - 模擬センサー値（速度・実測ケイデンス・心拍）は「表示確認だけ」。core には渡さず、制御にも使わない
 //   （CONTRACT-ext.md は設計のみで未実装。心拍の閾値や自動減速は作らない）
 // - 未計測・欠測は null（0 にしない）。停止中・速度不明のペースは「算出不能」
-import { speedOf } from '../../../core/runwave-core.js';
+import { core } from './core-ns.js';
 
 export const SENSOR_FIELDS = [
   { id: 'speedMps', label: '速度', unit: 'm/s' },
@@ -59,7 +59,7 @@ export function sensorText(parsed, unit, digits = 1) {
  */
 export function coreSpeedMps(view, config) {
   if (view.waiting || view.finished) return 0;
-  return speedOf(config.runner.strideM, view.bpm);
+  return core.speedOf(config.runner.strideM, view.bpm);
 }
 
 /**

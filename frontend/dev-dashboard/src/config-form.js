@@ -1,7 +1,9 @@
 // 設定フォーム ↔ core の config、入力検証（DOM 非依存）
 // フォームの値はすべて文字列で持つ（空欄・"abc"・"Infinity" も入力として扱い、項目名つきのエラーにする）。
 // 最後に core の validateConfig を必ず通す。例外は握りつぶさずメッセージにして返す（白画面にしない）。
-import { DEFAULT_CONTROL, CROSSING_MODELS, validateConfig } from '../../../core/runwave-core.js';
+import { core } from './core-ns.js';
+
+const CROSSING_MODELS = Array.isArray(core.CROSSING_MODELS) ? core.CROSSING_MODELS : ['point', 'length']; // 新しい横断モデルが core に増えたら選択肢に自動で出る
 
 /** kind: pos=0 より大きい / nonneg=0 以上 / any=有限の数なら何でも */
 export const FIELDS = [
@@ -36,7 +38,7 @@ const getPath = (obj, path) => path.reduce((o, k) => (o == null ? undefined : o[
 
 /** core の config → フォームの値（文字列）。control の省略値は core の既定値で補う */
 export function configToForm(config) {
-  const full = { ...config, control: { ...DEFAULT_CONTROL, ...(config.control || {}) } };
+  const full = { ...config, control: { ...(core.DEFAULT_CONTROL || {}), ...(config.control || {}) } };
   const form = {};
   for (const f of FIELDS) form[f.id] = String(getPath(full, f.path));
   return form;
@@ -69,7 +71,7 @@ function setPath(obj, path, value) {
  * 戻り値 { config, errors }: errors は [{ field, message }]（field は項目 ID、core の検証メッセージは null）。
  * errors が 1 つでもあれば config は null。
  */
-export function parseForm(form) {
+export function parseForm(form, base = null) {
   const errors = [];
   const values = {};
   for (const f of FIELDS) {
@@ -97,16 +99,46 @@ export function parseForm(form) {
     return { config: null, errors };
   }
 
-  const config = { signal: {}, runner: {}, route: {}, control: {} };
+  // base（現在の config）があれば、フォームにない項目（core に増えた設定など）をそのまま引き継ぐ。enabled は 2 レーン側で決める
+  const config = base ? cloneConfig(base) : { signal: {}, runner: {}, route: {}, control: {} };
+  for (const k of ['signal', 'runner', 'route', 'control']) config[k] ??= {};
   for (const f of FIELDS) setPath(config, f.path, values[f.id]);
 
   try {
-    validateConfig(config);
+    if (typeof core.validateConfig !== 'function') throw new Error('core の validateConfig が見つかりません（core の契約が変わった可能性）');
+    core.validateConfig(config);
   } catch (e) {
     errors.push({ field: null, message: `core の検証: ${e.message}` });
     return { config: null, errors };
   }
   return { config, errors: [] };
+}
+
+function cloneConfig(base) {
+  const c = JSON.parse(JSON.stringify(base));
+  if (c.control) delete c.control.enabled;
+  return c;
+}
+
+/**
+ * フォームで編集できない設定項目（core の既定値・シナリオにあるが FIELDS にないもの）を [パス, 値] で返す。
+ * 画面に「そのまま保持される項目」として出す。
+ */
+export function extraConfigEntries(config) {
+  const covered = new Set(FIELDS.map((f) => f.path.join('.')));
+  const full = { ...config, control: { ...(core.DEFAULT_CONTROL || {}), ...(config?.control || {}) } };
+  const out = [];
+  for (const [group, obj] of Object.entries(full)) {
+    if (obj !== null && typeof obj === 'object' && !Array.isArray(obj)) {
+      for (const [k, v] of Object.entries(obj)) {
+        const path = `${group}.${k}`;
+        if (!covered.has(path) && path !== 'control.enabled') out.push([path, v]);
+      }
+    } else if (obj !== undefined) {
+      out.push([group, obj]);
+    }
+  }
+  return out;
 }
 
 const round = (v) => Math.round(v * 1e6) / 1e6;

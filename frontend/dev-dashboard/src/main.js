@@ -1,8 +1,15 @@
 // 画面の組み立てとイベント。計算は sim-engine / core、通信は api-client、共有は report、手動記録は checklist に任せる。
-import { CORE_VERSION, MODE_LABELS } from '../../../core/runwave-core.js';
+import { core, scenariosNs, adapterNs } from './core-ns.js';
+import {
+  checkCoreContract,
+  describeExports,
+  extraSummaryRows,
+  stateRows,
+} from './core-compat.js';
 import {
   DEFAULT_SCENARIO_ID,
   FIXED_SCENARIOS,
+  SCENARIO_PROBLEMS,
   SPEEDS,
   advance,
   createPair,
@@ -11,11 +18,12 @@ import {
   getFixedScenario,
   isPairDone,
   laneView,
+  modeLabel,
   pairSummary,
   planTicks,
   verifyPair,
 } from './sim-engine.js';
-import { FIELDS, MODEL_HELP, configToForm, formsEqual, parseForm } from './config-form.js';
+import { FIELDS, MODEL_HELP, configToForm, extraConfigEntries, formsEqual, parseForm } from './config-form.js';
 import {
   DEFAULT_API_BASE,
   DEFAULT_TIMEOUT_MS,
@@ -37,6 +45,16 @@ import {
   setStatus,
 } from './checklist.js';
 import './styles.css';
+
+/* ---------- core の契約チェック（起動時に 1 回） ---------- */
+const CORE_VERSION = core.CORE_VERSION ?? '不明';
+let contract;
+try {
+  contract = checkCoreContract(core, { adapter: adapterNs, scenarios: scenariosNs, probeConfig: FIXED_SCENARIOS[0]?.config });
+} catch (e) {
+  contract = { ok: false, features: { sim: false, form: false, preview: false, api: false, scenarios: false }, missing: [`契約チェック自体が例外: ${e.message}`], warnings: [], problems: [] };
+}
+const F = contract.features; // 機能ごとの有効/無効（false の機能だけ止める）
 
 /* ---------- 小さな補助 ---------- */
 const META = typeof __RUNWAVE_META__ !== 'undefined' ? __RUNWAVE_META__ : { gitSha: null, gitBranch: null, builtAt: null };
@@ -72,6 +90,8 @@ function h(tag, props, ...children) {
   return el;
 }
 const $ = (id) => document.getElementById(id);
+/** replaceChildren の null / false 除外版（null が文字列 "null" として出ないように） */
+const fill = (el, ...kids) => el.replaceChildren(...kids.flat(Infinity).filter((k) => k != null && k !== false));
 const f1 = (v) => (v == null ? '-' : (Math.round(v * 10) / 10).toFixed(1));
 const f0 = (v) => (v == null ? '-' : String(Math.round(v)));
 const badge = (status, label) => h('span', { class: `badge ${status}`, text: label ?? STATUS_LABELS[status] ?? status });
@@ -111,9 +131,9 @@ const app = {
 };
 
 const configKey = (config) => JSON.stringify(configToForm(config));
-const isDirty = () => !formsEqual(app.form, configToForm(app.config));
-const isDone = () => isPairDone(app.pair);
-const isEdited = () => configKey(app.config) !== app.baseKey;
+const isDirty = () => !!app.config && !formsEqual(app.form, configToForm(app.config));
+const isDone = () => !!app.pair && isPairDone(app.pair);
+const isEdited = () => !!app.config && configKey(app.config) !== app.baseKey;
 const scenarioLabel = () => (app.source.kind === 'api' ? `API:${app.source.signalId}` : app.source.scenarioId);
 
 /* ---------- 設定の適用・リセット ---------- */
@@ -155,6 +175,7 @@ function setConfig(config, source, { keepBase = false } = {}) {
 
 function loadScenario(id) {
   const sc = getFixedScenario(id);
+  if (!sc || !F.sim) return;
   setConfig(sc.config, { kind: 'fixed', scenarioId: id });
 }
 
@@ -221,20 +242,20 @@ function onDone() {
 }
 
 function canRun() {
-  return app.formErrors.length === 0 && !isDirty() && !app.runError;
+  return F.sim && !!app.pair && app.formErrors.length === 0 && !isDirty() && !app.runError;
 }
 
 /* ---------- 描画: 上部の状態 ---------- */
 function renderStatus() {
   const chip = (k, v) => h('span', { class: 'chip' }, h('span', { class: 'k', text: k }), h('b', { text: v }));
-  const runState = isDone() ? '完了' : app.running ? '実行中' : app.pair.tick > 0 ? '一時停止' : '未開始';
+  const runState = !app.pair ? '利用不可' : isDone() ? '完了' : app.running ? '実行中' : app.pair.tick > 0 ? '一時停止' : '未開始';
   const verif = app.verification.status === 'checking' ? '照合中…' : { pending: '照合待ち', match: '一致', mismatch: '不一致' }[app.verification.status];
   const apiOverall = overallStatus(app.api.results);
   const src = app.source.kind === 'api' ? `API（${app.source.signalId}）` : '固定値';
   $('status').replaceChildren(
     chip('シナリオ', `${scenarioLabel()}${isEdited() ? '（編集済み）' : ''}`),
     chip('データの出所', src),
-    chip('core', `v${CORE_VERSION}`),
+    chip('core', CORE_VERSION === '不明' ? 'バージョン不明' : `v${CORE_VERSION}`),
     chip('Git', META.gitSha ? `${META.gitSha.slice(0, 7)}${META.gitBranch ? ` (${META.gitBranch})` : ''}` : '不明'),
     chip('比較', runState),
     chip('逐次=compare 照合', verif),
@@ -256,7 +277,7 @@ function buildScenarioPicker() {
 function renderScenarioPicker() {
   for (const b of $('scenario-picker').querySelectorAll('button[data-id]')) {
     b.setAttribute('aria-pressed', String(app.source.kind === 'fixed' && app.source.scenarioId === b.dataset.id));
-    b.disabled = app.running;
+    b.disabled = app.running || !F.sim || !F.scenarios;
   }
 }
 
@@ -264,12 +285,19 @@ function renderExpected() {
   const rows = FIXED_SCENARIOS.map((sc) => {
     const done = app.expectedReady[sc.id];
     if (!done) return h('tr', null, h('td', { text: sc.title }), h('td', { colspan: 3, text: '計算中…' }), h('td', { text: sc.expectNote }));
-    const e = expectedFor(sc.id);
-    const cell = (s) => `${s.stops} 回 / ${f1(s.stopTimeS)} 秒 / ${f1(s.totalTimeS)} 秒`;
-    const d = describeResult(e);
-    return h('tr', null, h('td', { text: sc.title }), h('td', { text: cell(e.normal) }), h('td', { text: cell(e.runwave) }), h('td', { text: `${d.stopLine}／${d.timeLine}` }), h('td', { text: sc.expectNote }));
+    let e;
+    let d;
+    try {
+      e = expectedFor(sc.id);
+      d = describeResult(e);
+    } catch (err) {
+      return h('tr', null, h('td', { text: sc.title }), h('td', { colspan: 3, text: `計算できません: ${err.message}` }), h('td', { text: sc.expectNote }));
+    }
+    const cell = (x) => `${x.stops} 回 / ${f1(x.stopTimeS)} 秒 / ${f1(x.totalTimeS)} 秒`;
+    return h('tr', null, h('td', { text: sc.title }), h('td', { text: cell(e.normal) }), h('td', { text: cell(e.runwave) }), h('td', { text: `${d.stopLine}／${d.timeLine}` }), h('td', null, sc.expectNote, sc.known ? null : h('span', { class: 'badge warn', text: '新規' })));
   });
-  $('expected').replaceChildren(
+  fill($('expected'),
+    FIXED_SCENARIOS.length === 0 ? h('div', { class: 'msg error', text: '使えるシナリオがありません（core/scenarios.js の SCENARIOS を確認してください）。' }) : null,
     h('h3', { text: 'core.compare による期待値（画面表示時に core を実行して算出。値は画面に固定で書いていません）' }),
     h('div', { class: 'table-scroll' },
       h('table', null,
@@ -296,6 +324,7 @@ function scheduleExpected() {
 /* ---------- 描画: シミュレーター ---------- */
 let simControls = null;
 function onReset() {
+  if (!F.sim || !app.config) return;
   try {
     resetRun();
   } catch (e) {
@@ -319,12 +348,14 @@ function buildSimControls() {
 }
 
 function renderControls() {
-  const { startBtn, stepBtn, speed } = simControls;
+  const { startBtn, stepBtn, resetBtn, speed } = simControls;
   const done = isDone();
-  startBtn.textContent = app.running ? '一時停止' : app.pair.tick > 0 && !done ? '再開' : '開始';
-  startBtn.disabled = done || (!app.running && !canRun());
-  startBtn.title = done ? 'ゴール済みです。リセットで最初から実行できます' : !canRun() ? '設定にエラーまたは未適用の変更があります' : '';
-  stepBtn.disabled = app.running || done || !canRun();
+  const off = !F.sim || !app.pair;
+  startBtn.textContent = app.running ? '一時停止' : app.pair?.tick > 0 && !done ? '再開' : '開始';
+  startBtn.disabled = off || done || (!app.running && !canRun());
+  startBtn.title = off ? 'core の契約が変わったため、比較シミュレーターは使えません' : done ? 'ゴール済みです。リセットで最初から実行できます' : !canRun() ? '設定にエラーまたは未適用の変更があります' : '';
+  stepBtn.disabled = off || app.running || done || !canRun();
+  resetBtn.disabled = off;
   speed.value = String(app.speed);
   renderScenarioPicker();
   renderStatus(); // 「比較」欄（未開始 / 実行中 / 一時停止 / 完了）
@@ -349,7 +380,7 @@ function renderLane(key, title, state, config, view) {
   const zoneWidth = model === 'length' ? `${(config.signal.crossingM / goalX) * 100}%` : '3px';
   el.querySelector('[data-role="lane-sub"]').textContent = view.finished
     ? `ゴール ${f1(view.finishTimeS)} 秒`
-    : view.waiting ? `信号待ち（停止 ${f1(view.stopTimeS)} 秒）` : MODE_LABELS[view.mode];
+    : view.waiting ? `信号待ち（停止 ${f1(view.stopTimeS)} 秒）` : modeLabel(view.mode);
   el.querySelector('.track').replaceChildren(
     h('div', { class: 'track-line' }),
     h('div', { class: `zone ${model}`, style: `left:${pct(config.route.crossingX)};width:${zoneWidth}`, title: model === 'length' ? `横断幅 ${config.signal.crossingM} m` : '横断地点' }),
@@ -366,7 +397,14 @@ function renderSim() {
   const err = $('sim-error');
   err.hidden = !app.runError;
   err.textContent = app.runError ?? '';
-  if (!app.pair) return;
+  if (!app.pair) {
+    $('lanes').replaceChildren(h('div', { class: 'msg error', text: '比較シミュレーターは使えません（core の契約が変わっています。画面上部の赤い帯を確認してください）。' }));
+    $('metrics').replaceChildren();
+    $('result').replaceChildren();
+    $('state-table').replaceChildren();
+    renderPreview();
+    return;
+  }
   const { pair } = app;
   const vN = laneView(pair.normal, pair.configs.normal, pair.tick);
   const vR = laneView(pair.runwave, pair.configs.runwave, pair.tick);
@@ -379,7 +417,7 @@ function renderSim() {
     ['位置（m）', (v) => f1(v.x), (v) => f1(v.x)],
     ['現在ケイデンス（歩/分）', bpmText, bpmText],
     ['目標ケイデンス（歩/分）', (v) => f0(v.targetBpm), (v) => f0(v.targetBpm)],
-    ['モード', (v) => MODE_LABELS[v.mode], (v) => MODE_LABELS[v.mode]],
+    ['モード', (v) => modeLabel(v.mode), (v) => modeLabel(v.mode)],
     ['信号色（共通の時計）', (v) => `${v.signal.label}（残り ${f1(v.signal.remainingS)} 秒）`, (v) => `${v.signal.label}（残り ${f1(v.signal.remainingS)} 秒）`],
     ['停止回数', (v) => String(v.stops), (v) => String(v.stops)],
     ['停止時間（秒・待機中の経過を含む）', (v) => f1(v.stopTimeS), (v) => f1(v.stopTimeS)],
@@ -398,6 +436,7 @@ function renderSim() {
     ),
   );
   renderResult();
+  renderStateTable();
   renderPreview();
 }
 
@@ -411,6 +450,7 @@ function renderResult() {
   const d = describeResult(summary);
   const v = app.verification;
   const timeLimit = !summary.normal.finished || !summary.runwave.finished;
+  const extraRows = extraSummaryRows(summary);
   box.replaceChildren(
     ...[
     timeLimit ? h('div', { class: 'msg warn', text: `最大時間（${app.pair.tick / 10} 秒）までにゴールしませんでした（到達不能とは断定しません）。` }) : null,
@@ -420,6 +460,15 @@ function renderResult() {
       '逐次 step と core.compare の照合: ',
       v.status === 'checking' ? badge('pending', '照合中…') : v.status === 'match' ? badge('success', '一致') : v.status === 'mismatch' ? badge('failure', '不一致') : badge('pending', '照合待ち'),
     ),
+    extraRows.length
+      ? h('div', null,
+          h('h3', { text: 'その他の集計（ダッシュボードが意味を知らない項目。core に追加されたもの）' }),
+          h('table', null,
+            h('thead', null, h('tr', null, ['項目', '通常走行', 'RUNWAVE'].map((t) => h('th', { text: t })))),
+            h('tbody', null, extraRows.map((r) => h('tr', null, h('th', { text: r.key }), h('td', { text: r.normal }), h('td', { text: r.runwave })))),
+          ),
+        )
+      : null,
     v.status === 'mismatch'
       ? h('div', { class: 'msg error' }, '不一致の項目があります（core または画面の不具合の可能性）。', h('ul', null, v.items.filter((i) => !i.ok).map((i) => h('li', { text: `${i.lane}.${i.key}: 逐次 ${i.sequential} / compare ${i.reference}` }))))
       : null,
@@ -454,6 +503,7 @@ function buildForm() {
     h('h3', { text: '走者・コース' }), mainGroup,
     h('h3', { text: '信号' }), signalGroup,
     h('div', { id: 'model-help', class: 'model-help' }),
+    h('div', { id: 'extra-config', class: 'hint' }),
     h('details', null, h('summary', { text: '詳細設定（余裕時間・調整上限・変更周期・目標再計算周期など）' }), advancedGroup),
     h('div', { id: 'form-errors', class: 'msg error', role: 'alert', hidden: true }),
     h('div', { id: 'form-dirty', class: 'msg info', hidden: true }),
@@ -474,12 +524,12 @@ function onFormInput(id, value) {
 }
 
 function validateForm() {
-  app.formErrors = parseForm(app.form).errors;
+  app.formErrors = parseForm(app.form, app.config).errors;
 }
 
 function onApply() {
   if (app.running) return;
-  const { config, errors } = parseForm(app.form);
+  const { config, errors } = parseForm(app.form, app.config);
   app.formErrors = errors;
   if (errors.length) {
     renderForm();
@@ -510,6 +560,16 @@ function renderForm() {
     h('div', { text: MODEL_HELP.point, style: model === 'point' ? 'font-weight:600' : '' }),
     h('div', { text: MODEL_HELP.length, style: model === 'length' ? 'font-weight:600' : '' }),
   );
+  // 横断モデルが core に増えた場合: 説明が無いことを示す（選択肢は core の CROSSING_MODELS から自動で出る）
+  if (model && !(model in MODEL_HELP)) {
+    $('model-help').append(h('div', { text: `${model}: このモデルの説明はダッシュボードにありません（core/CONTRACT.md を参照）。`, style: 'font-weight:600' }));
+  }
+  const extra = app.config ? extraConfigEntries(app.config) : [];
+  $('extra-config').replaceChildren(
+    ...(extra.length
+      ? [h('b', { text: '編集欄にない設定（そのまま保持されます）: ' }), extra.map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' / ')]
+      : []),
+  );
   const errBox = $('form-errors');
   errBox.hidden = app.formErrors.length === 0;
   errBox.replaceChildren(
@@ -521,7 +581,7 @@ function renderForm() {
   const dirtyBox = $('form-dirty');
   dirtyBox.hidden = !dirty || app.formErrors.length > 0;
   dirtyBox.textContent = '未適用の変更があります。「適用してリセット」を押すと、この値で両レーンを作り直します（押すまで開始できません）。';
-  $('btn-apply').disabled = app.running || app.formErrors.length > 0 || !dirty;
+  $('btn-apply').disabled = app.running || !F.form || !F.sim || app.formErrors.length > 0 || !dirty;
   $('btn-revert').disabled = app.running || !dirty;
 }
 
@@ -570,7 +630,8 @@ async function onCheckApi() {
 function renderApi() {
   const btn = $('btn-api');
   const anyFail = app.api.results.some((r) => r.status === 'failure');
-  btn.disabled = app.api.checking;
+  btn.disabled = app.api.checking || !F.api;
+  btn.title = F.api ? '' : 'core / api-adapter の契約が変わったため、API 確認は使えません';
   btn.textContent = app.api.checking ? '確認中…' : anyFail ? '再試行（API を確認）' : 'API を確認';
 
   const rows = ENDPOINTS.map((ep) => {
@@ -627,7 +688,7 @@ function renderApi() {
         }),
       ),
       h('div', { class: 'controls' },
-        h('button', { type: 'button', class: 'primary', id: 'btn-api-apply', disabled: app.running || app.api.selected == null, onclick: onApplyApiSignal }, '比較条件へ適用'),
+        h('button', { type: 'button', class: 'primary', id: 'btn-api-apply', disabled: app.running || !F.sim || !F.form || app.api.selected == null, onclick: onApplyApiSignal }, '比較条件へ適用'),
         app.running ? h('span', { class: 'hint', text: '実行中は適用できません。一時停止してください。' }) : null,
       ),
     );
@@ -647,7 +708,7 @@ function renderApi() {
 }
 
 function onApplyApiSignal() {
-  if (app.running) return;
+  if (app.running || !app.config || !F.sim) return;
   const sig = app.api.results.find((r) => r.id === 'signals');
   const item = sig?.data?.signals.find((x) => x.index === app.api.selected && x.signal);
   if (!item) {
@@ -667,7 +728,7 @@ function onApplyApiSignal() {
 
 /* ---------- 描画: 共有 ---------- */
 function currentReport() {
-  const summary = pairSummary(app.pair);
+  const summary = app.pair ? pairSummary(app.pair) : null;
   const source = { ...app.source, edited: isEdited() };
   return buildReport({
     now: new Date(),
@@ -676,10 +737,11 @@ function currentReport() {
     coreVersion: CORE_VERSION,
     source,
     scenarioId: scenarioLabel(),
-    config: app.config,
-    tick: app.pair.tick,
+    config: app.config ?? {},
+    tick: app.pair?.tick ?? 0,
+    contract,
     summary,
-    description: describeResult(summary),
+    description: summary ? describeResult(summary) : null,
     verification: isDone() ? (app.verification.status === 'checking' ? { status: 'pending', items: [] } : app.verification) : { status: 'pending', items: [] },
     apiBase: app.api.resultsBase ?? app.api.base,
     apiResults: app.api.results,
@@ -840,13 +902,16 @@ function buildPreview() {
 }
 
 function renderPreview() {
-  if (!app.pair) return;
+  if (!F.preview || !app.pair) {
+    $('preview-cards').replaceChildren(h('div', { class: 'msg error', text: '端末風プレビューは使えません（core の契約が変わっています）。' }));
+    return;
+  }
   const key = app.previewLane;
   const state = app.pair[key];
   const config = app.pair.configs[key];
   const view = laneView(state, config, app.pair.tick);
   const m = buildPreviewModel({ view, config, sensors: app.sensors });
-  const modeText = MODE_LABELS[m.target.mode];
+  const modeText = modeLabel(m.target.mode);
 
   const invalid = ['speed', 'cadence', 'heartRate'].map((k) => m.measured[k]).filter((p) => p.state === 'invalid');
   const errBox = $('sensor-errors');
@@ -902,6 +967,77 @@ function renderAll() {
   renderChecklist();
 }
 
+/* ---------- 契約の帯・core の自動表示 ---------- */
+const FEATURE_NAMES = { sim: '比較シミュレーター', form: '設定フォームの適用', preview: '端末風プレビュー', api: 'API 確認', scenarios: 'シナリオ選択' };
+
+function renderBanner() {
+  const kids = [];
+  if (!contract.ok) {
+    const off = Object.entries(F).filter(([, on]) => !on).map(([k]) => FEATURE_NAMES[k] ?? k);
+    kids.push(
+      h('div', { class: 'band error', role: 'alert' },
+        h('b', { text: `core の契約が変わりました（不足: ${[...contract.missing, ...contract.problems].join('、')}）。dashboard の更新が必要です` }),
+        off.length ? h('div', { text: `無効にしている機能: ${off.join('、')}。それ以外は使えます。` }) : null,
+      ),
+    );
+  }
+  if (contract.warnings.length) {
+    kids.push(h('div', { class: 'band warn' }, `core の一部の export が見つかりません（該当の表示は簡易になります）: ${contract.warnings.join(' / ')}`));
+  }
+  if (SCENARIO_PROBLEMS.length) {
+    kids.push(h('div', { class: 'band warn' }, `シナリオの一部を読み込めませんでした: ${SCENARIO_PROBLEMS.join(' / ')}`));
+  }
+  $('contract-banner').replaceChildren(...kids);
+}
+
+/** core state の全項目（history 除く）を汎用表示する。既知の項目は「詳細」、未知のキーは「新しい項目」 */
+function renderStateTable() {
+  const det = $('state-details');
+  if (!det || !det.open) return; // 開いているときだけ毎フレーム更新する
+  if (!app.pair) return;
+  const rows = stateRows(app.pair.normal, app.pair.runwave);
+  const fresh = rows.filter((r) => !r.known).length;
+  fill($('state-table'),
+    fresh ? h('div', { class: 'msg info', text: `ダッシュボードが意味を知らない項目が ${fresh} 件あります（core に追加された可能性）。` }) : null,
+    h('div', { class: 'table-scroll' },
+      h('table', null,
+        h('thead', null, h('tr', null, ['項目', '区分', '通常走行', 'RUNWAVE'].map((t) => h('th', { text: t })))),
+        h('tbody', null, rows.map((r) =>
+          h('tr', null,
+            h('th', { text: r.key }),
+            h('td', null, r.known ? '詳細' : h('span', { class: 'badge warn', text: '新しい項目' })),
+            h('td', { text: r.normal }),
+            h('td', { text: r.runwave }),
+          ))),
+      ),
+    ),
+  );
+}
+
+/** core の公開 export を、ダッシュボードで使用中／未使用に分けて出す（起動時に 1 回） */
+function buildExports() {
+  const { used, unused } = describeExports(core);
+  const table = (rows, withNew) =>
+    h('div', { class: 'table-scroll' },
+      h('table', null,
+        h('thead', null, h('tr', null, ['名前', '種類', '引数の数'].map((t) => h('th', { text: t })))),
+        h('tbody', null, rows.map((r) =>
+          h('tr', null,
+            h('th', null, r.name, withNew && r.possiblyNew ? h('span', { class: 'badge warn', text: '新規の可能性' }) : null),
+            h('td', { text: r.kind }),
+            h('td', { text: r.arity == null ? '-' : String(r.arity) }),
+          ))),
+      ),
+    );
+  $('core-exports').replaceChildren(
+    h('p', { class: 'hint', text: `core/runwave-core.js の export は全部で ${used.length + unused.length} 件。core に関数が増えると、ここに自動で出ます（「新規の可能性」はダッシュボードが把握していない名前）。` }),
+    h('h3', { text: `ダッシュボードで使用中（${used.length}）` }),
+    table(used, false),
+    h('h3', { text: `未使用（${unused.length}）` }),
+    table(unused, true),
+  );
+}
+
 function init() {
   buildScenarioPicker();
   buildSimControls();
@@ -910,9 +1046,31 @@ function init() {
   buildShare();
   buildPreview();
   buildChecklist();
+  buildExports();
+  $('state-details').addEventListener('toggle', renderStateTable);
+  renderBanner();
   renderExpected();
-  loadScenario(DEFAULT_SCENARIO_ID);
-  scheduleExpected();
+  if (F.sim && F.scenarios && DEFAULT_SCENARIO_ID) {
+    loadScenario(DEFAULT_SCENARIO_ID);
+    scheduleExpected();
+  } else {
+    renderAll(); // 比較シミュレーターは無効。他の機能（API・チェックなど）は使える
+  }
 }
 
-init();
+function showFatal(err, where) {
+  try {
+    const box = document.getElementById('fatal');
+    box.hidden = false;
+    box.replaceChildren(
+      h('b', { text: `ダッシュボードでエラーが発生しました（${where}）。画面の一部が動かない可能性があります。` }),
+      h('pre', { text: String(err?.stack || err?.message || err) }),
+    );
+  } catch { /* 表示自体に失敗しても何もしない */ }
+}
+
+try {
+  init();
+} catch (e) {
+  showFatal(e, '起動処理');
+}

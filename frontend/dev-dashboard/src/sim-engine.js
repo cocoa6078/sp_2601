@@ -1,15 +1,8 @@
 // 比較シミュレーターの計算部分（DOM 非依存。Node のテストと Vite の両方から同じファイルを使う）
 // 計算は core の createRun / step / summarize / compare をそのまま呼ぶだけ。独自のアルゴリズムは持たない。
 // 描画（requestAnimationFrame）と計算（tick）は分離する: 表示速度は「何 tick 進めるか」だけを変え、dt は常に 0.1 秒。
-import {
-  DT,
-  createRun,
-  step,
-  summarize,
-  compare,
-  signalAt,
-} from '../../../core/runwave-core.js';
-import { SCENARIOS, DEMO, withModel } from '../../../core/scenarios.js';
+import { core, scenariosNs } from './core-ns.js';
+import { buildScenarios, defaultScenarioId } from './core-compat.js';
 
 export const TPS = 10; // 1 秒あたりの tick 数（core の DT=0.1 と対応）
 export const MAX_TIME_S = 1800; // core.simulate / compare の既定 maxTimeS と同じ
@@ -17,46 +10,37 @@ export const MAX_TICKS = Math.ceil(MAX_TIME_S * TPS);
 export const SPEEDS = [1, 2, 5];
 export const TOLERANCE = 1e-6; // 小数の照合許容（core は round6 で丸めている）
 
-// ---------- 固定シナリオ（core/scenarios.js を再利用。期待値はここに書かず core.compare で出す） ----------
-export const FIXED_SCENARIOS = [
-  {
-    id: 'B',
-    title: 'B（phaseS=100・point）',
-    expectNote: '加速して停止を回避し、通常走行より早くゴールするケース',
-    config: withModel(SCENARIOS.B, 'point'),
-  },
-  {
-    id: 'A',
-    title: 'A（phaseS=20・point）',
-    expectNote: '減速して停止を回避するケース（停止はなくなるが所要時間は長くなる）',
-    config: withModel(SCENARIOS.A, 'point'),
-  },
-  {
-    id: 'B-length',
-    title: 'B（phaseS=100・length・横断20m）',
-    expectNote: '横断幅も考慮すると回避できないケース（RUNWAVE でも止まる）',
-    config: withModel(SCENARIOS.B, 'length'),
-  },
-  {
-    id: 'DEMO-sub',
-    title: 'デモ副（phaseS=26・point）',
-    expectNote: '減速して停止を回避するケース（core の DEMO.sub）',
-    config: withModel(DEMO.sub, 'point'),
-  },
-];
-
-export const DEFAULT_SCENARIO_ID = 'B';
+// ---------- シナリオ（core/scenarios.js の SCENARIOS / DEMO の全キーから自動生成。期待値は core.compare で出す） ----------
+function safeBuild() {
+  try {
+    return buildScenarios({
+      SCENARIOS: scenariosNs.SCENARIOS,
+      DEMO: scenariosNs.DEMO,
+      withModel: scenariosNs.withModel,
+      validate: core.validateConfig,
+    });
+  } catch (e) {
+    return { scenarios: [], problems: [`シナリオの生成中に例外: ${e.message}`] };
+  }
+}
+export const SCENARIO_BUILD = safeBuild();
+export const FIXED_SCENARIOS = SCENARIO_BUILD.scenarios;
+export const SCENARIO_PROBLEMS = SCENARIO_BUILD.problems;
+export const DEFAULT_SCENARIO_ID = defaultScenarioId(FIXED_SCENARIOS);
 
 export function getFixedScenario(id) {
   return FIXED_SCENARIOS.find((s) => s.id === id) ?? null;
 }
+
+/** モード名: core の MODE_LABELS にあればそれを、無ければ生のモード値をそのまま表示する */
+export const modeLabel = (mode) => core.MODE_LABELS?.[mode] ?? String(mode);
 
 const expectedCache = new Map();
 /** 固定シナリオの期待値（core.compare の結果）。初回だけ計算してキャッシュする */
 export function expectedFor(id) {
   const sc = getFixedScenario(id);
   if (!sc) throw new RangeError(`未知のシナリオ ID: ${id}`);
-  if (!expectedCache.has(id)) expectedCache.set(id, compare(sc.config));
+  if (!expectedCache.has(id)) expectedCache.set(id, core.compare(sc.config));
   return expectedCache.get(id);
 }
 
@@ -73,8 +57,8 @@ export function createPair(config) {
   return {
     config,
     configs,
-    normal: createRun(configs.normal),
-    runwave: createRun(configs.runwave),
+    normal: core.createRun(configs.normal),
+    runwave: core.createRun(configs.runwave),
     tick: 0, // 両レーン共通の時計
   };
 }
@@ -91,8 +75,8 @@ export function stepPair(pair) {
   if (isPairDone(pair)) return pair;
   return {
     ...pair,
-    normal: step(pair.normal, pair.configs.normal),
-    runwave: step(pair.runwave, pair.configs.runwave),
+    normal: core.step(pair.normal, pair.configs.normal),
+    runwave: core.step(pair.runwave, pair.configs.runwave),
     tick: pair.tick + 1,
   };
 }
@@ -140,7 +124,7 @@ export function laneView(state, config, commonTick) {
     mode: state.mode,
     phase: state.phase,
     waiting,
-    signal: signalAt(config.signal, commonTick / TPS), // 共通の時計での信号（両レーンで同じ）
+    signal: core.signalAt(config.signal, commonTick / TPS), // 共通の時計での信号（両レーンで同じ）
     stops: state.stops,
     stopTimeS: displayStopTimeS(state),
     finished: state.finished,
@@ -150,29 +134,36 @@ export function laneView(state, config, commonTick) {
 
 export function pairSummary(pair) {
   return {
-    normal: summarize(pair.normal, pair.configs.normal),
-    runwave: summarize(pair.runwave, pair.configs.runwave),
+    normal: core.summarize(pair.normal, pair.configs.normal),
+    runwave: core.summarize(pair.runwave, pair.configs.runwave),
   };
 }
 
-const SUMMARY_KEYS = ['finished', 'termination', 'stops', 'stopTimeS', 'totalTimeS', 'minBpm', 'maxBpm', 'totalBpmChange'];
-
-function sameValue(a, b) {
-  if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) <= TOLERANCE;
+/** 数値は許容誤差つき、配列・オブジェクトは中身を再帰的に比較する（新しい集計が増えても比べられるように） */
+export function sameValue(a, b) {
+  if (typeof a === 'number' && typeof b === 'number') return Number.isNaN(a) && Number.isNaN(b) ? true : Math.abs(a - b) <= TOLERANCE;
+  if (a !== null && b !== null && typeof a === 'object' && typeof b === 'object') {
+    const ka = Object.keys(a);
+    const kb = Object.keys(b);
+    if (Array.isArray(a) !== Array.isArray(b) || ka.length !== kb.length) return false;
+    return ka.every((k) => k in b && sameValue(a[k], b[k]));
+  }
   return a === b;
 }
 
 /**
  * 逐次 step の最終結果と core.compare(config) を項目ごとに照合する。
+ * 比べる項目は summary の全キー（既知のものに限らない。片方にしかないキーは不一致になる）。
  * 終わっていない間は status='pending'（照合待ち）。
  */
 export function verifyPair(pair) {
   if (!isPairDone(pair)) return { status: 'pending', items: [] };
   const sequential = pairSummary(pair);
-  const reference = compare(pair.config, { maxTimeS: MAX_TIME_S });
+  const reference = core.compare(pair.config, { maxTimeS: MAX_TIME_S });
   const items = [];
   for (const lane of ['normal', 'runwave']) {
-    for (const key of SUMMARY_KEYS) {
+    const keys = [...new Set([...Object.keys(sequential[lane] ?? {}), ...Object.keys(reference[lane] ?? {})])];
+    for (const key of keys) {
       items.push({
         lane,
         key,
@@ -224,4 +215,3 @@ export function describeResult(summary) {
   return { stopLine, timeLine, avoided, timeDiffS: diff };
 }
 
-export { DT };

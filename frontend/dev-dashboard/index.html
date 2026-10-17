@@ -6,6 +6,21 @@
     <title>RUNWAVE 動作確認ダッシュボード</title>
   </head>
   <body>
+    <div id="contract-banner"></div>
+    <div id="fatal" class="band error" role="alert" hidden></div>
+    <script>
+      // 起動前・非同期のエラーでも白画面のままにしない（main.js の外で先に登録する）
+      (function () {
+        function show(err, where) {
+          var box = document.getElementById("fatal");
+          if (!box) return;
+          box.hidden = false;
+          box.textContent = "ダッシュボードでエラーが発生しました（" + where + "）: " + ((err && (err.stack || err.message)) || err);
+        }
+        window.addEventListener("error", function (e) { show(e.error || e.message, "実行時エラー"); });
+        window.addEventListener("unhandledrejection", function (e) { show(e.reason, "未処理の非同期エラー"); });
+      })();
+    </script>
     <header class="top">
       <h1>RUNWAVE 動作確認ダッシュボード</h1>
       <p class="banner" role="note">
@@ -30,6 +45,11 @@
         <div id="lanes" class="lanes"></div>
         <div id="metrics"></div>
         <div id="result" class="result"></div>
+        <details id="state-details">
+          <summary>core state の全項目（両レーンの現在値。history は除く）</summary>
+          <p class="hint">既知の項目は「詳細」、ダッシュボードが意味を知らないキーは「新しい項目」と表示します。開いている間だけ更新します。</p>
+          <div id="state-table"></div>
+        </details>
       </section>
 
       <section id="config-section" class="card" aria-labelledby="h-config">
@@ -58,6 +78,13 @@
         <div id="checklist"></div>
       </section>
     </main>
+
+    <section class="card" style="max-width:1100px;margin:0 auto 14px;">
+      <details id="exports-details">
+        <summary>core の公開関数・export 一覧（使用中 / 未使用）</summary>
+        <div id="core-exports"></div>
+      </details>
+    </section>
 
     <footer class="foot">
       <p>RUNWAVE dev-dashboard（P0）。core は <code>core/</code> の実ファイルを参照しています。計算はコピーしていません。</p>
