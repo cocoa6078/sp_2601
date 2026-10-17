@@ -47,7 +47,8 @@ try {
     const cycleS = greenS + yellowS + redS; 
 
     return {
-      signalId: `hokkaido_${signal["地域"]}_${signal["交差点番号"]}`,
+      //signalId: `hokkaido_${signal["地域"]}_${signal["交差点番号"]}`,
+      signalId: `sapporo_${signal["交差点番号"]}`,
       region: signal["地域"],
       lat: signal["緯度"],
       lon: signal["経度"],
@@ -57,7 +58,9 @@ try {
       redS: redS,
       phaseS: 0,
       crossingM: 15.0,
-      note: "※JARTICビッグデータ抽出分"
+      isEstimated: true, // 推定値フラグ
+      //note: "※JARTICビッグデータ抽出分"
+      note: "※車両用信号のスプリット由来、黄は5秒固定、位相は仮（15秒ずらし）の推定値です。"
     };
   });
   console.log(`✅ 全データロード成功: ${allSignalsDataF02.length}件のF-02変換完了`);
@@ -71,7 +74,7 @@ try {
   // 指定順序 (3 -> 8 -> 2 -> 1 -> 5) でソート
   const orderMap = { 3: 1, 8: 2, 2: 3, 1: 4, 5: 5 };
   filteredData.sort((a, b) => orderMap[a["交差点番号"]] - orderMap[b["交差点番号"]]);
-
+  /*
   // デモ用配列の生成（動的位相計算版）
   signalsData = filteredData.map((signal, index) => {
     const greenS = Math.max(0, signal["青信号時間"] - 5);
@@ -90,6 +93,31 @@ try {
       phaseS: dynamicPhaseS,
       crossingM: 15.0,
       note: "※JARTIC由来の参考プリセット（車両用データ流用・位相自動計算版）"
+    };
+  });
+  */
+  signalsData = filteredData.map((signal, index) => {
+    const greenS = Math.max(0, signal["青信号時間"] - 5); 
+    const yellowS = 5;
+    const redS = signal["赤信号時間"];
+    const cycleS = greenS + yellowS + redS; 
+
+    // 仮のコース上の累積距離（m）を付与（例: 0m, 350m, 700m, 1050m, 1400m）
+    const estimatedDistances = [0, 350, 700, 1050, 1400];
+
+    return {
+      signalId: `sapporo_${signal["交差点番号"]}`,
+      orderIndex: index + 1,                    // 交差点的順序
+      lat: signal["緯度"] || 43.0687,           // 緯度
+      lon: signal["経度"] || 141.3508,          // 経度
+      distanceFromStartM: estimatedDistances[index], // スタートからの距離(m)
+      cycleS: cycleS,
+      greenS: greenS,
+      yellowS: yellowS,
+      redS: redS,
+      phaseS: index * 15,
+      crossingM: 15.0,
+      note: "※JARTIC由来の参考プリセット（車両用データ流用）"
     };
   });
   console.log(`✅ デモ用データ準備完了: ${signalsData.length} 件抽出`);
@@ -144,6 +172,7 @@ app.get('/api/calibration', (req, res) => {
 });
 
 // [POST] 走行ログの保存
+// 詳細な走行履歴（history）を受け取る POST /api/logs の拡張
 app.post('/api/logs', (req, res) => {
   const logData = req.body ?? {};
   
@@ -151,19 +180,39 @@ app.post('/api/logs', (req, res) => {
     return res.status(400).json({ ステータス: "エラー", メッセージ: "データが空です" });
   }
 
-  const newLog = { 時刻: new Date().toISOString(), ...logData };
+  const newLog = { 
+    id: `log_${Date.now()}`, // 一意のIDを付与
+    時刻: new Date().toISOString(), 
+    ...logData // { signalId, summary, history: [{t, x, bpm, ...}] } など
+  };
+  
   runLogs.push(newLog);
 
-  // ログファイルへの永続保存
+  // ローカル環境のみファイル保存（Vercel本番ではメモリ上で処理）
   try {
     fs.writeFileSync(logsFilePath, JSON.stringify(runLogs, null, 2), 'utf-8');
   } catch (error) {
-    console.error("❌ ログのファイル保存に失敗しました:", error.message);
+    console.error("⚠️ 本番環境または書き込み権限がないため、メモリ上にのみ保存します。");
   }
 
   res.status(201).json({
     ステータス: "成功",
+    id: newLog.id,
     総ログ数: runLogs.length
+  });
+});
+
+app.get('/api/logs/:id', (req, res) => {
+  const logId = req.params.id;
+  const targetLog = runLogs.find(log => log.id === logId);
+
+  if (!targetLog) {
+    return res.status(404).json({ ステータス: "エラー", メッセージ: "指定されたログが見つかりません" });
+  }
+
+  res.status(200).json({
+    ステータス: "成功",
+    データ: targetLog
   });
 });
 
