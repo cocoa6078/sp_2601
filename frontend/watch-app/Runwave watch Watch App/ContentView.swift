@@ -10,7 +10,7 @@ struct ContentView: View {
     @StateObject private var connectivity = WatchConnectivityManager()
     @StateObject private var output = TempoOutputPlayer()
     @State private var previewID: UUID?
-    @State private var isDemoRunning = false
+    @State private var isTempoActive = false
     @State private var isPaused = false
     @State private var showEndConfirmation = false
     @State private var crownCadence = 140.0
@@ -21,13 +21,13 @@ struct ContentView: View {
                 workoutSummaryView
             } else if connectivity.sessionState == .goalReached {
                 goalView
-            } else if isDemoRunning {
-                demoView
+            } else if isTempoActive {
+                workoutView
             } else {
                 homeView
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: isDemoRunning)
+        .animation(.easeInOut(duration: 0.2), value: isTempoActive)
         .onReceive(connectivity.$sessionState) { state in
             switch state {
             case .idle:
@@ -35,27 +35,26 @@ struct ContentView: View {
             case .running:
                 previewID = nil
                 isPaused = false
-                isDemoRunning = true
+                isTempoActive = true
             case .paused:
                 isPaused = true
             case .goalReached:
                 previewID = nil
-                isDemoRunning = false
+                isTempoActive = false
                 isPaused = false
             case .ended:
                 previewID = nil
-                isDemoRunning = false
+                isTempoActive = false
                 isPaused = false
             }
         }
         .onReceive(connectivity.$previewRequestID) { request in
-            guard let request, !isDemoRunning else { return }
+            guard let request, !isTempoActive else { return }
             previewID = request
             isPaused = false
-            isDemoRunning = true
+            isTempoActive = true
         }
         .onChange(of: playbackConfiguration) { _, configuration in
-            guard let configuration else { return }
             output.updateConfiguration(configuration)
         }
         .onChange(of: output.errorMessage) { _, message in
@@ -67,7 +66,7 @@ struct ContentView: View {
             crownCadence = Double(cadence)
         }
         .onChange(of: crownCadence) { _, value in
-            guard isDemoRunning else { return }
+            guard isTempoActive else { return }
             let cadence = Int(value.rounded())
             if cadence != connectivity.targetCadence {
                 connectivity.setTargetCadenceFromCrown(cadence)
@@ -78,14 +77,14 @@ struct ContentView: View {
             await output.run(configuration)
             if !Task.isCancelled, let request = configuration.previewID, previewID == request {
                 previewID = nil
-                isDemoRunning = false
+                isTempoActive = false
             }
         }
     }
 
     private var playbackTaskKey: String {
         [
-            isDemoRunning ? "running" : "idle",
+            isTempoActive ? "running" : "idle",
             isPaused ? "paused" : "active",
             connectivity.outputSettings.mode.rawValue,
             previewID?.uuidString ?? ""
@@ -93,7 +92,7 @@ struct ContentView: View {
     }
 
     private var playbackConfiguration: TempoPlaybackConfiguration? {
-        guard isDemoRunning, !isPaused,
+        guard isTempoActive, !isPaused,
               connectivity.outputSettings.mode == .haptic || connectivity.outputSettings.mode == .audio else { return nil }
         return TempoPlaybackConfiguration(
             cadence: connectivity.guidedCadence,
@@ -124,7 +123,7 @@ struct ContentView: View {
         .padding(.vertical, 2)
     }
 
-    private var demoView: some View {
+    private var workoutView: some View {
         VStack(spacing: 2) {
             VStack(spacing: 0) {
                 Text("\(connectivity.targetCadence)")
@@ -198,7 +197,7 @@ struct ContentView: View {
                         showEndConfirmation = true
                     } else {
                         previewID = nil
-                        isDemoRunning = false
+                        isTempoActive = false
                         isPaused = false
                     }
                 } label: {

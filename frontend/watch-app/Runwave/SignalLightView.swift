@@ -70,7 +70,6 @@ private struct SignalLamp: View {
 
 struct SignalLightView: View {
     let signal: SignalInfo?
-    let isDemo: Bool
 
     private static let redColor = Color.red
     private static let blueColor = Color(red: 0.0, green: 0.62, blue: 0.9)
@@ -81,9 +80,6 @@ struct SignalLightView: View {
                 Text("信号")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
-                if isDemo {
-                    DemoBadge()
-                }
                 Spacer()
             }
 
@@ -151,9 +147,6 @@ struct SignalLightView: View {
         var text = "信号：" + (signal?.color.label ?? "信号情報なし（未受信）")
         if let seconds = remainingText {
             text += "、" + seconds
-        }
-        if isDemo {
-            text += "（デモ値）"
         }
         return text
     }

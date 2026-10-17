@@ -6,7 +6,7 @@
 //  Windows で作成（ビルド未確認）。
 //
 //  - 対象: iOS 17+（Map(position:) / MapReader / MapProxy / Marker を使用）
-//  - 現在地（CLLocationManager）は使わない。位置情報の権限は要求しない。
+//  - 現在地と終了地点からAppleの徒歩経路を取得し、候補を選択する。
 //  - 終了地点は必須項目。未選択ではセッションを開始できない。
 //
 
@@ -57,6 +57,17 @@ struct GoalPoint: Equatable {
 struct GoalPreviewMap: View {
     let goal: GoalPoint?
     let currentLocation: CLLocationCoordinate2D?
+    var plannedRoute: MKRoute? = nil
+
+    private var displayPosition: MapCameraPosition {
+        guard let plannedRoute else { return .region(displayRegion) }
+        var rect = plannedRoute.polyline.boundingMapRect
+        if let currentLocation {
+            let point = MKMapPoint(currentLocation)
+            rect = rect.union(MKMapRect(x: point.x, y: point.y, width: 1, height: 1))
+        }
+        return .rect(rect)
+    }
 
     private var displayRegion: MKCoordinateRegion {
         let fallback = GoalPoint.sapporoStation.coordinate
@@ -80,7 +91,10 @@ struct GoalPreviewMap: View {
     }
 
     var body: some View {
-        Map(position: .constant(MapCameraPosition.region(displayRegion))) {
+        Map(position: .constant(displayPosition)) {
+            if let plannedRoute {
+                MapPolyline(plannedRoute.polyline).stroke(.cyan, lineWidth: 5)
+            }
             if let goal {
                 Marker("終了地点", coordinate: goal.coordinate)
             }
@@ -104,7 +118,7 @@ final class CurrentLocationObserver: NSObject, ObservableObject, CLLocationManag
     override init() {
         super.init()
         manager.delegate = self
-        manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+        manager.desiredAccuracy = kCLLocationAccuracyBest
     }
 
     func start() {
@@ -135,7 +149,8 @@ final class CurrentLocationObserver: NSObject, ObservableObject, CLLocationManag
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last,
               location.horizontalAccuracy >= 0,
-              location.horizontalAccuracy <= 100 else { return }
+              location.horizontalAccuracy <= 50,
+              abs(location.timestamp.timeIntervalSinceNow) <= 30 else { return }
         coordinate = location.coordinate
     }
 }
@@ -149,27 +164,101 @@ final class CurrentLocationObserver: NSObject, ObservableObject, CLLocationManag
 /// - キャンセル: 何も変えずに閉じる
 struct GoalMapView: View {
     /// 決定時に呼ばれる。nil はクリア操作中の未選択状態。
-    let onDecide: (GoalPoint?) -> Void
+    let onDecide: (GoalPoint?, MKRoute?) -> Void
     let activityModeLabel: String?
+    @ObservedObject private var locationObserver: CurrentLocationObserver
 
     @Environment(\.dismiss) private var dismiss
     @State private var position: MapCameraPosition
     @State private var pending: GoalPoint?
+    @State private var centeredOnCurrentLocation: Bool
+    @StateObject private var planner = WalkingRoutePlanner()
+    @State private var routeSearchID = UUID()
 
-    init(initialGoal: GoalPoint?, activityModeLabel: String? = nil, onDecide: @escaping (GoalPoint?) -> Void) {
+    init(
+        initialGoal: GoalPoint?,
+        locationObserver: CurrentLocationObserver,
+        activityModeLabel: String? = nil,
+        onDecide: @escaping (GoalPoint?, MKRoute?) -> Void
+    ) {
         self.onDecide = onDecide
         self.activityModeLabel = activityModeLabel
-        let center = initialGoal ?? GoalPoint.sapporoStation
+        _locationObserver = ObservedObject(wrappedValue: locationObserver)
+        let center = locationObserver.coordinate.map {
+            GoalPoint(latitude: $0.latitude, longitude: $0.longitude)
+        } ?? initialGoal ?? GoalPoint.sapporoStation
         _position = State(initialValue: MapCameraPosition.region(center.region(span: 0.02)))
         _pending = State(initialValue: initialGoal)
+        _centeredOnCurrentLocation = State(initialValue: locationObserver.coordinate != nil)
     }
 
     var body: some View {
         VStack(spacing: 0) {
             header
             mapArea
+            routeChoices
             buttons
         }
+        .task(id: routeRequestKey) {
+            planner.reset()
+            guard let pending, let source = locationObserver.coordinate else { return }
+            do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
+            await planner.calculate(from: source, to: pending)
+            if let route = planner.selectedRoute { position = .rect(route.polyline.boundingMapRect) }
+        }
+        .onChange(of: planner.selectedIndex) { _, _ in
+            if let route = planner.selectedRoute { position = .rect(route.polyline.boundingMapRect) }
+        }
+    }
+
+    private var routeRequestKey: String {
+        "\(pending?.latitude ?? 0),\(pending?.longitude ?? 0):\(locationObserver.coordinate != nil):\(routeSearchID)"
+    }
+
+    private var routeChoices: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if planner.isLoading {
+                ProgressView("徒歩ルートを検索中…")
+            } else if let message = planner.errorMessage {
+                Text(message).font(.caption).foregroundStyle(.orange)
+                Button("再検索") { routeSearchID = UUID() }
+                    .buttonStyle(.bordered)
+            } else if locationObserver.coordinate == nil {
+                Text(locationObserver.isDenied ? "設定で位置情報を許可すると、現在地から経路を検索できます" : "経路検索のため現在地を取得中…")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else if pending == nil {
+                Text("終了地点をタップすると徒歩ルートを検索します")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text("経路を選択・ランニングも徒歩ルートを使用")
+                    .font(.caption).foregroundStyle(.secondary)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(planner.routes.indices, id: \.self) { index in
+                            let route = planner.routes[index]
+                            Button {
+                                planner.selectedIndex = index
+                            } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Label("経路\(index + 1)", systemImage: planner.selectedIndex == index ? "checkmark.circle.fill" : "circle")
+                                        .font(.headline)
+                                    Text(route.distance.formattedRouteDistance).font(.subheadline.bold())
+                                    Text("徒歩目安 \(max(1, Int((route.expectedTravelTime / 60).rounded())))分")
+                                        .font(.caption)
+                                }
+                                .padding(12)
+                                .background(planner.selectedIndex == index ? Color.cyan.opacity(0.18) : Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityAddTraits(planner.selectedIndex == index ? .isSelected : [])
+                        }
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 
     // 上部: 説明と選択中の座標
@@ -197,9 +286,24 @@ struct GoalMapView: View {
     private var mapArea: some View {
         MapReader { proxy in
             Map(position: $position) {
+                ForEach(planner.routes.indices, id: \.self) { index in
+                    MapPolyline(planner.routes[index].polyline)
+                        .stroke(planner.selectedIndex == index ? Color.cyan : Color.gray.opacity(0.6), lineWidth: planner.selectedIndex == index ? 6 : 3)
+                }
+                if let coordinate = locationObserver.coordinate {
+                    Marker("現在地", systemImage: "location.fill", coordinate: coordinate)
+                        .tint(.blue)
+                }
                 if let p = pending {
                     Marker("終了地点", coordinate: p.coordinate)
                 }
+            }
+            .onChange(of: locationObserver.coordinate?.latitude) { _, _ in
+                guard !centeredOnCurrentLocation,
+                      let coordinate = locationObserver.coordinate else { return }
+                let current = GoalPoint(latitude: coordinate.latitude, longitude: coordinate.longitude)
+                position = .region(current.region(span: 0.02))
+                centeredOnCurrentLocation = true
             }
             .onTapGesture { screenPoint in
                 if let coordinate = proxy.convert(screenPoint, from: .local) {
@@ -207,7 +311,8 @@ struct GoalMapView: View {
                         latitude: coordinate.latitude,
                         longitude: coordinate.longitude
                     )
-                    if point.isValid {
+                    if point.isValid, point != pending {
+                        planner.reset()
                         pending = point
                     }
                 }
@@ -219,6 +324,7 @@ struct GoalMapView: View {
     private var buttons: some View {
         HStack(spacing: 10) {
             Button {
+                planner.reset()
                 pending = nil
             } label: {
                 Image(systemName: "trash")
@@ -242,10 +348,10 @@ struct GoalMapView: View {
             .controlSize(.large)
 
             Button {
-                onDecide(pending)
+                onDecide(pending, planner.selectedRoute)
                 dismiss()
             } label: {
-                Text("決定")
+                Text("この経路")
                     .font(.headline)
                     .frame(maxWidth: .infinity)
                     .lineLimit(1)
@@ -255,7 +361,7 @@ struct GoalMapView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .tint(.green)
-            .disabled(pending == nil)
+            .disabled(pending == nil || planner.selectedRoute == nil || planner.isLoading)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)

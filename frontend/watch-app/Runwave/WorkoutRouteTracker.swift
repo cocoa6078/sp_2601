@@ -41,6 +41,7 @@ final class WorkoutRouteTracker: NSObject, ObservableObject, CLLocationManagerDe
     @Published private(set) var statusMessage: String?
 
     var onMetrics: ((Int?, Double, Int?) -> Void)?
+    var onLocation: ((CLLocation) -> Void)?
     var goal: GoalPoint?
 
     private let locationManager = CLLocationManager()
@@ -61,6 +62,8 @@ final class WorkoutRouteTracker: NSObject, ObservableObject, CLLocationManagerDe
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
         locationManager.distanceFilter = kCLDistanceFilterNone
+        locationManager.activityType = .fitness
+        locationManager.pausesLocationUpdatesAutomatically = false
     }
 
     func start() {
@@ -108,12 +111,19 @@ final class WorkoutRouteTracker: NSObject, ObservableObject, CLLocationManagerDe
         activeStartedAt = nil
         isActive = false
         locationManager.stopUpdatingLocation()
+        #if os(iOS)
+        locationManager.allowsBackgroundLocationUpdates = false
+        #endif
         pedometer.stopUpdates()
     }
 
     func resume() {
         guard !isActive else { return }
         isActive = true
+        #if os(iOS)
+        locationManager.allowsBackgroundLocationUpdates = true
+        locationManager.showsBackgroundLocationIndicator = true
+        #endif
         activeStartedAt = Date()
         stepCountAtResume = activeSteps
         switch locationManager.authorizationStatus {
@@ -169,10 +179,12 @@ final class WorkoutRouteTracker: NSObject, ObservableObject, CLLocationManagerDe
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard isActive else { return }
-        for location in locations where location.horizontalAccuracy >= 0 && location.horizontalAccuracy <= 25 {
+        for location in locations where location.horizontalAccuracy >= 0 && location.horizontalAccuracy <= 25
+            && abs(location.timestamp.timeIntervalSinceNow) <= 15 {
             if let goal {
                 distanceToGoalM = location.distance(from: CLLocation(latitude: goal.latitude, longitude: goal.longitude))
             }
+            onLocation?(location)
             let previous = lastLocation
             lastLocation = location
             guard let activeStartedAt else { continue }
@@ -246,9 +258,13 @@ private extension Int {
 struct WorkoutRouteMap: View {
     let route: [CLLocationCoordinate2D]
     let goal: GoalPoint?
+    var plannedRoute: MKRoute? = nil
 
     var body: some View {
         Map {
+            if let plannedRoute {
+                MapPolyline(plannedRoute.polyline).stroke(.cyan.opacity(0.65), lineWidth: 7)
+            }
             if route.count > 1 {
                 MapPolyline(coordinates: route).stroke(.blue, lineWidth: 5)
             }
@@ -258,6 +274,6 @@ struct WorkoutRouteMap: View {
         }
         .mapStyle(.standard(elevation: .flat))
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .accessibilityLabel("ワークアウトのGPS経路")
+        .accessibilityLabel("選択した徒歩ルートと実際に移動した経路")
     }
 }

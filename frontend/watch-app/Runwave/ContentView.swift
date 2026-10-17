@@ -157,8 +157,6 @@ struct SessionSummary: Equatable {
     var elapsed: TimeInterval
     var distance: Double?
     var averageCadence: Int?
-    /// デモ値から作られたサマリか
-    var isDemo: Bool
     var activityMode: ActivityMode
 }
 
@@ -170,7 +168,6 @@ struct WorkoutRecord: Identifiable, Codable, Equatable {
     var elapsed: TimeInterval
     var distance: Double?
     var averageCadence: Int?
-    var isDemo: Bool
     var route: [WorkoutCoordinate]
     var speedSamples: [WorkoutSpeedSample]
     var stopCount: Int
@@ -182,13 +179,12 @@ struct WorkoutRecord: Identifiable, Codable, Equatable {
         elapsed = summary.elapsed
         distance = summary.distance
         averageCadence = summary.averageCadence
-        isDemo = summary.isDemo
         self.route = route
         self.speedSamples = speedSamples
         self.stopCount = stopCount
     }
 
-    private enum CodingKeys: String, CodingKey { case id, date, activityMode, elapsed, distance, averageCadence, isDemo, route, speedSamples, stopCount }
+    private enum CodingKeys: String, CodingKey { case id, date, activityMode, elapsed, distance, averageCadence, route, speedSamples, stopCount }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -198,7 +194,6 @@ struct WorkoutRecord: Identifiable, Codable, Equatable {
         elapsed = try values.decode(TimeInterval.self, forKey: .elapsed)
         distance = try values.decodeIfPresent(Double.self, forKey: .distance)
         averageCadence = try values.decodeIfPresent(Int.self, forKey: .averageCadence)
-        isDemo = try values.decodeIfPresent(Bool.self, forKey: .isDemo) ?? false
         route = try values.decodeIfPresent([WorkoutCoordinate].self, forKey: .route) ?? []
         speedSamples = try values.decodeIfPresent([WorkoutSpeedSample].self, forKey: .speedSamples) ?? []
         stopCount = try values.decodeIfPresent(Int.self, forKey: .stopCount) ?? 0
@@ -224,8 +219,6 @@ struct MetricDisplay {
     let unit: String
     /// 「未接続」「未計測」など、数値ではない表示か
     let isPlaceholder: Bool
-    /// デモ値か
-    let isDemo: Bool
 }
 
 // MARK: - 状態管理
@@ -248,8 +241,6 @@ final class SessionStore: ObservableObject {
     @Published private(set) var screen: AppScreen = .home
     @Published private(set) var summary: SessionSummary?
     @Published private(set) var workoutRecords = WorkoutRecord.load()
-    /// DEBUG ビルドでのみ true にできる（リリースでは常に false）
-    @Published private(set) var isDemoMode: Bool = false
     /// 終了地点。未設定の場合はセッションを開始できない。
     /// TODO(連携): 終了地点を送るかは Watch/シミュレーターと要合意（現状は iPhone 内のみで保持）
     @Published private(set) var outputSettings = TempoOutputSettings.load()
@@ -262,6 +253,7 @@ final class SessionStore: ObservableObject {
     /// 最後に受け取った信号情報。nil は未受信。iPhone では色を計算しない。
     @Published private(set) var latestSignal: SignalInfo?
     let routeTracker = WorkoutRouteTracker()
+    let navigation = RouteNavigation()
     private let iphoneTempoOutputPlayer = IPhoneTempoOutputPlayer()
     private let goalSpeechSynthesizer = AVSpeechSynthesizer()
     private let goalAudioSession = AVAudioSession.sharedInstance()
@@ -288,6 +280,11 @@ final class SessionStore: ObservableObject {
                 averageCadence: averageCadence ?? old?.averageCadence,
                 receivedAt: Date()
             )
+        }
+        routeTracker.onLocation = { [weak self] location in
+            guard let self else { return }
+            self.navigation.update(location)
+            self.checkGoalApproach(self.routeTracker.distanceToGoalM)
         }
 
         link.onMetrics = { [weak self] metrics in
@@ -442,16 +439,23 @@ final class SessionStore: ObservableObject {
         )
     }
 
+    func refreshIPhoneTempoOutput() {
+        guard workoutState == .running, outputSettings.mode == .iphoneAudio else { return }
+        iphoneTempoOutputPlayer.resumeIfNeeded()
+    }
+
     // MARK: 終了地点
 
     /// 終了地点を設定する。緯度経度が不正な値なら無視する。
-    func setGoal(_ point: GoalPoint) {
+    func setGoal(_ point: GoalPoint, route: MKRoute? = nil) {
         guard point.isValid else { return }
+        navigation.select(route)
         goal = point
     }
 
     /// 終了地点を未設定に戻す。
     func clearGoal() {
+        navigation.select(nil)
         goal = nil
     }
 
@@ -465,26 +469,12 @@ final class SessionStore: ObservableObject {
     /// 信号情報を受け取る。
     /// TODO(連携): シミュレーター/Watch から受け取る経路は未実装
     func receiveSignal(_ info: SignalInfo?) {
-        // デモ値表示中は実際の受信値で上書きしない（見分けがつかなくなるため）
-        guard !isDemoMode else { return }
         latestSignal = info
     }
 
-    /// デモ用に信号の色を切り替える（DEBUG 限定。デモモード中のみ有効）。
-    func setDemoSignal(_ color: SignalColor) {
-        #if DEBUG
-        guard isDemoMode else { return }
-        latestSignal = Self.makeDemoSignal(color)
-        #endif
-    }
-
-    private static func makeDemoSignal(_ color: SignalColor) -> SignalInfo {
-        SignalInfo(color: color, remainingS: color == .flashing ? 5 : 12)
-    }
-
-    /// 信号を初期状態に戻す（デモ中はデモ値、そうでなければ nil）。
+    /// 信号を初期状態に戻す。
     private func resetSignal() {
-        latestSignal = isDemoMode ? Self.makeDemoSignal(.green) : nil
+        latestSignal = nil
     }
 
     private func makeCommand() -> TargetCommand {
@@ -508,7 +498,7 @@ final class SessionStore: ObservableObject {
 
     func start(mode: ActivityMode, measuredCadence: Int) {
         guard workoutState == .idle || workoutState == .ended else { return }
-        guard goal?.isValid == true else { return }
+        guard goal?.isValid == true, navigation.selectedRoute != nil else { return }
         activityMode = mode
         cadenceBaseline = normalizedCadence(measuredCadence)
         cadenceAdjustment = 0
@@ -525,6 +515,7 @@ final class SessionStore: ObservableObject {
         workoutState = .running
         screen = .session
         routeTracker.goal = goal
+        navigation.start(goal: goal)
         updateIPhoneTempoOutput()
         routeTracker.start()
         link.updateOutputSettings(outputSettings)
@@ -543,6 +534,7 @@ final class SessionStore: ObservableObject {
         workoutState = .paused
         updateIPhoneTempoOutput()
         routeTracker.pause()
+        navigation.pause()
         link.workoutDidPause()
     }
 
@@ -552,6 +544,7 @@ final class SessionStore: ObservableObject {
         workoutState = .running
         updateIPhoneTempoOutput()
         routeTracker.resume()
+        navigation.resume()
         link.workoutDidResume()
     }
 
@@ -559,13 +552,13 @@ final class SessionStore: ObservableObject {
         guard workoutState == .running || workoutState == .paused else { return }
         freezeElapsed()
         let measured = routeTracker.finish()
+        navigation.stop()
         workoutState = .ended
         updateIPhoneTempoOutput()
         let finishedSummary = SessionSummary(
             elapsed: accumulated,
             distance: measured.distance ?? latestMetrics?.distance,
             averageCadence: measured.averageCadence ?? latestMetrics?.averageCadence,
-            isDemo: isDemoMode,
             activityMode: activityMode
         )
         summary = finishedSummary
@@ -590,7 +583,10 @@ final class SessionStore: ObservableObject {
     func checkGoalApproach(_ distance: Double?) {
         guard workoutState == .running,
               !goalApproachPresentedThisSession,
+              !navigation.isOffRoute,
+              (navigation.remainingDistance ?? .infinity) <= 30,
               let distance, distance.isFinite, distance <= 20 else { return }
+        navigation.pause()
         goalApproachPresentedThisSession = true
         goalApproachDistanceM = max(0, distance)
         showGoalApproach = true
@@ -601,7 +597,10 @@ final class SessionStore: ObservableObject {
     func dismissGoalApproach() {
         guard showGoalApproach else { return }
         showGoalApproach = false
-        if workoutState == .running { link.workoutDidContinueAfterGoal() }
+        if workoutState == .running {
+            navigation.resume()
+            link.workoutDidContinueAfterGoal()
+        }
     }
 
     private func announceGoal() {
@@ -615,8 +614,8 @@ final class SessionStore: ObservableObject {
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(2))
             guard let self else { return }
-            // Restore the tempo player's non-interrupting audio policy after the short cue.
-            try? self.goalAudioSession.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
+            // Restore background-capable, non-interrupting playback after the short cue.
+            try? self.goalAudioSession.setCategory(.playback, mode: .default, options: [.mixWithOthers])
         }
     }
 
@@ -660,8 +659,6 @@ final class SessionStore: ObservableObject {
     // MARK: Watch からの入力
 
     private func handleMetrics(_ metrics: WatchMetrics) {
-        // デモ値表示中は実測値で上書きしない（見分けがつかなくなるため）
-        guard !isDemoMode else { return }
         let previous = latestMetrics
         latestMetrics = WatchMetrics(
             currentCadence: metrics.currentCadence ?? previous?.currentCadence,
@@ -682,30 +679,9 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    // MARK: デモ値（DEBUG 限定）
-
-    /// 固定のデモ値。実測と見分けられるよう、表示側で必ず「デモ値」バッジを付ける。
-    private static func makeDemoMetrics() -> WatchMetrics {
-        WatchMetrics(
-            currentCadence: 158,
-            heartRate: 142,
-            distance: 3200,
-            averageCadence: 156,
-            receivedAt: Date()
-        )
-    }
-
-    func setDemoMode(_ on: Bool) {
-        #if DEBUG
-        isDemoMode = on
-        resetMetrics()
-        resetSignal()
-        #endif
-    }
-
-    /// 計測値を初期状態に戻す（デモ中はデモ値、そうでなければ nil）。
+    /// 計測値を初期状態に戻す。
     private func resetMetrics() {
-        latestMetrics = isDemoMode ? Self.makeDemoMetrics() : nil
+        latestMetrics = nil
     }
 
     // MARK: 表示ルール
@@ -714,13 +690,13 @@ final class SessionStore: ObservableObject {
     ///   未接続 -> 「未接続」 / 接続中だが nil -> 「未計測」 / それ以外は数値。
     ///   ケイデンス・心拍が nil や 0 以下のとき 0 とは表示しない（「未計測」にする）。
     func metricDisplay(_ value: Int?, unit: String) -> MetricDisplay {
-        if !isDemoMode && connectionState == .notConnected {
-            return MetricDisplay(text: "未接続", unit: unit, isPlaceholder: true, isDemo: false)
+        if connectionState == .notConnected {
+            return MetricDisplay(text: "未接続", unit: unit, isPlaceholder: true)
         }
         guard let v = value, v > 0 else {
-            return MetricDisplay(text: "未計測", unit: unit, isPlaceholder: true, isDemo: false)
+            return MetricDisplay(text: "未計測", unit: unit, isPlaceholder: true)
         }
-        return MetricDisplay(text: "\(v)", unit: unit, isPlaceholder: false, isDemo: isDemoMode)
+        return MetricDisplay(text: "\(v)", unit: unit, isPlaceholder: false)
     }
 }
 
@@ -748,19 +724,6 @@ private func formatDistance(_ meters: Double?) -> String {
 }
 
 // MARK: - 共通パーツ
-
-/// デモ値を示すバッジ。実測値と見分けるため、デモ表示のときは必ず出す。
-struct DemoBadge: View {
-    var body: some View {
-        Text("デモ値")
-            .font(.caption2.bold())
-            .foregroundColor(.white)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(Capsule().fill(Color.orange))
-            .accessibilityLabel("デモ値")
-    }
-}
 
 /// Watch 接続状態の表示。
 private struct ConnectionBadge: View {
@@ -811,7 +774,7 @@ private struct CompactConnectionStatus: View {
 }
 
 /// カードの背景。
-private struct CardBackground: View {
+struct CardBackground: View {
     var body: some View {
         RoundedRectangle(cornerRadius: 16, style: .continuous)
             .fill(Color.secondary.opacity(0.12))
@@ -829,9 +792,6 @@ private struct MetricCard: View {
                 Text(title)
                     .font(.subheadline)
                     .foregroundColor(.secondary)
-                if display.isDemo {
-                    DemoBadge()
-                }
                 Spacer()
             }
             HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -955,9 +915,6 @@ private struct HomeView: View {
                 .padding(20)
                 .background(CardBackground())
 
-                #if DEBUG
-                demoToggle
-                #endif
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 24)
@@ -979,7 +936,7 @@ private struct HomeView: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                     .tint(mode == .running ? .green : .blue)
-                    .disabled(store.goal == nil || calibration.stride(for: mode) == nil || calibration.cadence(for: mode) == nil)
+                    .disabled(store.goal == nil || store.navigation.selectedRoute == nil || calibration.stride(for: mode) == nil || calibration.cadence(for: mode) == nil)
                     .accessibilityLabel("\(mode.label)を開始")
                     .accessibilityHint(store.goal == nil ? "先に終了地点を設定してください" : "")
                 }
@@ -988,27 +945,14 @@ private struct HomeView: View {
             .padding(.vertical, 12)
             .background(.ultraThinMaterial)
         }
-        .safeAreaInset(edge: .top) {
-            HStack(spacing: 12) {
-                ForEach(ActivityMode.allCases) { mode in
-                    Label(mode.label, systemImage: mode.icon)
-                        .font(.caption.bold())
-                        .foregroundStyle(calibration.stride(for: mode) == nil ? .secondary : .primary)
-                    if let stride = calibration.stride(for: mode) {
-                        Text(String(format: "%.2fm", stride)).font(.caption.monospacedDigit())
-                    } else {
-                        Text("歩幅未測定").font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 6)
-            .background(.ultraThinMaterial)
-        }
         .sheet(isPresented: $showGoalMap) {
-            GoalMapView(initialGoal: store.goal, activityModeLabel: store.goalSetupActivityMode?.label) { newGoal in
+            GoalMapView(
+                initialGoal: store.goal,
+                locationObserver: currentLocation,
+                activityModeLabel: store.goalSetupActivityMode?.label
+            ) { newGoal, route in
                 if let point = newGoal {
-                    store.setGoal(point)
+                    store.setGoal(point, route: route)
                 } else {
                     store.clearGoal()
                 }
@@ -1032,7 +976,7 @@ private struct HomeView: View {
                 .font(.subheadline)
                 .foregroundColor(.secondary)
 
-            GoalPreviewMap(goal: store.goal, currentLocation: currentLocation.coordinate)
+            GoalPreviewMap(goal: store.goal, currentLocation: currentLocation.coordinate, plannedRoute: store.navigation.selectedRoute)
                 .frame(height: 140)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
@@ -1046,7 +990,7 @@ private struct HomeView: View {
             }
 
             if let goal = store.goal {
-                Text(goal.coordinateText)
+                Text(store.navigation.selectedRoute.map { "徒歩ルート \($0.distance.formattedRouteDistance)・曲がり角を音声で案内" } ?? goal.coordinateText)
                     .font(.footnote)
                     .monospacedDigit()
                     .foregroundColor(.secondary)
@@ -1059,7 +1003,7 @@ private struct HomeView: View {
             Button {
                 showGoalMap = true
             } label: {
-                Label("地図で設定", systemImage: "map")
+                Label("地図で終了地点・経路を設定", systemImage: "map")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.bordered)
@@ -1069,26 +1013,6 @@ private struct HomeView: View {
         .background(CardBackground())
     }
 
-    #if DEBUG
-    private var demoToggle: some View {
-        HStack(spacing: 8) {
-            Toggle(isOn: Binding(
-                get: { store.isDemoMode },
-                set: { store.setDemoMode($0) }
-            )) {
-                HStack(spacing: 8) {
-                    Text("デモ値で表示（DEBUG）")
-                        .font(.subheadline)
-                    if store.isDemoMode {
-                        DemoBadge()
-                    }
-                }
-            }
-        }
-        .padding(16)
-        .background(CardBackground())
-    }
-    #endif
 }
 
 /// 選択した運動種別の歩幅を測定するカード。
@@ -1288,7 +1212,9 @@ private struct RecordsView: View {
             HStack {
                 Label(record.activityMode.label, systemImage: record.activityMode.icon)
                     .font(.headline)
-                if record.isDemo { DemoBadge() }
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .layoutPriority(1)
                 Spacer()
                 Text(Self.rowDateFormatter.string(from: record.date))
                     .font(.caption)
@@ -1325,7 +1251,6 @@ private struct WorkoutRecordDetailView: View {
                 HStack(spacing: 8) {
                     Label(record.activityMode.label, systemImage: record.activityMode.icon)
                         .font(.headline)
-                    if record.isDemo { DemoBadge() }
                     Spacer()
                 }
                 Text(RecordsView.rowDateFormatter.string(from: record.date))
@@ -1430,23 +1355,22 @@ private struct FirstStrideSetupView: View {
 private struct SessionView: View {
     @ObservedObject var store: SessionStore
     @ObservedObject var routeTracker: WorkoutRouteTracker
+    @ObservedObject var navigation: RouteNavigation
     @State private var showEndConfirm = false
 
     init(store: SessionStore) {
         self.store = store
         self.routeTracker = store.routeTracker
+        self.navigation = store.navigation
     }
 
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
-                // 画面上部: タイトル・接続状態・（デモ時のみ）デモ値バッジ
+                // 画面上部: タイトル・接続状態
                 HStack(spacing: 8) {
                     Label(store.activityMode.label, systemImage: store.activityMode.icon)
                         .font(.system(size: 22, weight: .heavy, design: .rounded))
-                    if store.isDemoMode {
-                        DemoBadge()
-                    }
                     Spacer()
                     ConnectionBadge(state: store.connectionState)
                 }
@@ -1494,26 +1418,14 @@ private struct SessionView: View {
 
                 // 信号のイラスト（受け取った値を描くだけ）
                 VStack(alignment: .leading, spacing: 12) {
-                    SignalLightView(signal: store.latestSignal, isDemo: store.isDemoMode)
-                    #if DEBUG
-                    if store.isDemoMode {
-                        Picker("信号（デモ）", selection: Binding<SignalColor>(
-                            get: { store.latestSignal?.color ?? SignalColor.green },
-                            set: { store.setDemoSignal($0) }
-                        )) {
-                            Text("赤").tag(SignalColor.red)
-                            Text("青").tag(SignalColor.green)
-                            Text("青点滅").tag(SignalColor.flashing)
-                        }
-                        .pickerStyle(.segmented)
-                    }
-                    #endif
+                    SignalLightView(signal: store.latestSignal)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(16)
                 .background(CardBackground())
 
-                WorkoutRouteMap(route: routeTracker.route, goal: store.goal)
+                NavigationInstructionCard(navigation: navigation)
+                WorkoutRouteMap(route: routeTracker.route, goal: store.goal, plannedRoute: navigation.selectedRoute)
                     .frame(height: 210)
                 HStack {
                     Label("距離", systemImage: "figure.run")
@@ -1585,9 +1497,6 @@ private struct SessionView: View {
             Button("キャンセル", role: .cancel) {}
         } message: {
             Text("終了すると結果画面に移動します。")
-        }
-        .onChange(of: routeTracker.distanceToGoalM) { _, distance in
-            store.checkGoalApproach(distance)
         }
         .fullScreenCover(isPresented: Binding(
             get: { store.showGoalApproach },
@@ -1720,9 +1629,6 @@ private struct ResultView: View {
                 HStack(spacing: 8) {
                     Label(store.summary?.activityMode.label ?? "結果", systemImage: store.summary?.activityMode.icon ?? "checkmark.circle")
                         .font(.system(size: 32, weight: .heavy, design: .rounded))
-                    if store.summary?.isDemo == true {
-                        DemoBadge()
-                    }
                     Spacer()
                 }
                 .padding(.top, 24)
@@ -1805,6 +1711,7 @@ private struct ResultView: View {
 struct ContentView: View {
     @StateObject private var store: SessionStore
     @StateObject private var calibration = StrideCalibrationManager()
+    @Environment(\.scenePhase) private var scenePhase
 
     init(link: any WatchLink = WatchConnectivityLink()) {
         _store = StateObject(wrappedValue: SessionStore(link: link))
@@ -1834,6 +1741,9 @@ struct ContentView: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: store.screen)
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { store.refreshIPhoneTempoOutput() }
+        }
     }
 }
 
