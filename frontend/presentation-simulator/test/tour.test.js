@@ -5,7 +5,7 @@ import { getScenario, highlightsFor } from '../src/scenarios.js';
 import { createSession, stateAtTick, TPS } from '../src/simulation.js';
 import { buildFrame, subtitleFor, describeDecision, PX_PER_M, footPxPerCycle, CYCLE_MIN_S } from '../src/demo-view-model.js';
 import { createExplanation, resetDemo, FULL_STAGES, SHORT_STAGES } from '../src/explanation-controller.js';
-import { buildTourPlan, createTour, segmentEndTick, explainEvents, PLAY_S, TITLE_MS } from '../src/tour.js';
+import { buildTourPlan, createTour, segmentEndTick, explainEvents, buildWindows, approachTick, cutText, TITLE_MS, CUT_MS, WINDOW1_S, APPROACH_M, TOUR_MULTIPLIER } from '../src/tour.js';
 import { zoomFor, zoomTransform, ZOOM_MIN, ZOOM_MAX } from '../src/zoom.js';
 
 const ids = ['B', 'A', 'W'];
@@ -43,111 +43,142 @@ function driveTour({ session, explanation, tour }, { onFrame, maxS = 90 } = {}) 
   return (now - t0) / 1000;
 }
 
-test('区間の終了 tick は core の逐次 step と一致する（x ≥ crossingX + crossingM + 10m の最初の tick）', () => {
+test('窓の開始・終了 tick は core の逐次 step と一致する（窓1=目標変化から12秒、窓2=横断地点の30m手前→横断の先10m、W は窓2a=walking の2秒前〜6秒後も）', () => {
   for (const sg of plan.segments) {
     const c = sg.config;
+    const end = segmentEndTick(c);
     const goalAt = c.route.crossingX + c.signal.crossingM + 10;
-    assert.equal(sg.endTick, segmentEndTick(c));
-    const at = stateAtTick(c, sg.endTick);
-    const before = stateAtTick(c, sg.endTick - 1);
-    assert.ok(at.x >= goalAt, `${sg.id}: x=${at.x}`);
-    assert.ok(before.x < goalAt);
-    assert.equal(at.finished, false, 'ゴールまでは走らない');
-    assert.ok(Math.abs(sg.multiplier - sg.simS / PLAY_S) < 1e-12);
-    assert.equal(sg.simS, sg.endTick / TPS);
-  }
-});
-
-test('解説の tick: 目標BPMが通常から最初に変わった tick と W の walking 入り（逐次 step で確認）', () => {
-  for (const sg of plan.segments) {
-    const c = sg.config;
+    assert.equal(sg.endTick, end);
+    assert.ok(stateAtTick(c, end).x >= goalAt && stateAtTick(c, end - 1).x < goalAt);
+    assert.equal(stateAtTick(c, end).finished, false, 'ゴールまでは走らない');
+    // 独立に逐次 step して、目標変化・walking・40m手前の tick を数える
     const base = c.runner.baseBpm;
     let s = core.createRun(c);
-    let firstTarget = null; let firstWalk = null;
-    while (s.tick < sg.endTick) {
+    let tTarget = null; let tWalk = null; let t40 = null;
+    while (s.tick < end) {
       s = core.step(s, c);
-      if (firstTarget === null && Math.abs(s.targetBpm - base) > 1e-9) firstTarget = s.tick;
-      if (firstWalk === null && s.mode === 'walking') firstWalk = s.tick;
+      if (tTarget === null && Math.abs(s.targetBpm - base) > 1e-9) tTarget = s.tick;
+      if (tWalk === null && s.mode === 'walking') tWalk = s.tick;
+      if (t40 === null && s.x >= c.route.crossingX - APPROACH_M) t40 = s.tick;
     }
-    assert.deepEqual(explainEvents(c, sg.endTick), sg.events);
-    assert.equal(sg.events[0].tick, firstTarget);
-    assert.equal(sg.events[0].kind, 'full');
-    if (sg.id === 'W') {
-      assert.equal(sg.events.length, 2);
-      assert.equal(sg.events[1].tick, firstWalk);
-      assert.equal(sg.events[1].kind, 'short');
+    assert.equal(approachTick(c, end), t40);
+    const w1 = sg.windows[0];
+    const w2 = sg.windows.at(-1);
+    assert.equal(w1.startTick, tTarget);
+    assert.equal(w1.endTick, tTarget + WINDOW1_S * TPS);
+    assert.equal(w2.startTick, t40);
+    assert.equal(w2.endTick, end);
+    if (tWalk !== null) {
+      assert.equal(sg.windows.length, 3);
+      assert.deepEqual(sg.windows[1], { startTick: tWalk - 20, endTick: tWalk + 60 });
     } else {
-      assert.equal(sg.events.length, 1);
+      assert.equal(sg.windows.length, 2);
     }
+    for (let i = 1; i < sg.windows.length; i++) assert.ok(sg.windows[i].startTick > sg.windows[i - 1].endTick, '窓は重ならない（あいだはカット）');
+    assert.deepEqual(buildWindows(c), sg.windows);
+    const cutSum = sg.windows.slice(1).reduce((x, w, i) => x + (w.startTick - sg.windows[i].endTick) / TPS, 0);
+    assert.ok(Math.abs(sg.cutSimS - cutSum) < 1e-12);
+    // 解説（ズーム）は窓1の開始と、W の walking 開始だけ
+    const tw = (e) => ({ tick: e.tick, why: e.why });
+    assert.deepEqual(explainEvents(c, end).map(tw), sg.events.map(tw));
+    assert.equal(sg.events[0].tick, w1.startTick);
+    assert.equal(sg.events[0].kind, sg.id === 'A' ? 'short' : 'full'); // A は B で一度フルで見せているので短縮版
+    assert.equal(sg.events.length, sg.id === 'W' ? 2 : 1);
+    if (sg.id === 'W') { assert.equal(sg.events[1].tick, tWalk); assert.equal(sg.events[1].kind, 'short'); assert.ok(tWalk >= sg.windows[1].startTick && tWalk <= sg.windows[1].endTick); }
   }
+  assert.equal(plan.multiplier, TOUR_MULTIPLIER);
+  assert.equal(TOUR_MULTIPLIER, 5);
 });
 
-test('通し再生: 実時間の合計が 35〜40 秒、各区間は終了 tick ちょうどで止まり、解説は各 1 回（W は 2 回）', () => {
+test('通し再生: カット表示の秒数＝ジャンプした sim 秒、ジャンプ先の state は逐次 step と一致、解説は B/A 各1回・W 2回、合計は計画と一致', () => {
   const ctx = makeTour();
-  const { session, explanation, tour, log } = ctx;
+  const { session, explanation, tour } = ctx;
   const starts = [];
+  const cuts = [];
   let prevActive = false;
   let heldTick = null;
+  let prevCut = null;
+  let tickBeforeCut = null;
+  let seenPhases = [];
   const titles = [];
   const real = driveTour(ctx, {
     onFrame: ({ ex }) => {
       if (tour.title && titles.at(-1) !== tour.title) titles.push(tour.title);
-      if (ex.active && !prevActive) { starts.push({ seg: tour.segment.id, tick: session.tick, stages: ex.stage }); heldTick = session.tick; }
+      if (seenPhases.at(-1) !== tour.phase) seenPhases.push(tour.phase);
+      if (ex.active && !prevActive) { starts.push({ seg: tour.segment.id, tick: session.tick }); heldTick = session.tick; }
       if (ex.active) assert.equal(session.tick, heldTick, '解説中は tick が進まない');
-      assert.ok(ex.active === session.hold || ex.finished || !ex.active);
       prevActive = ex.active;
+      const cut = tour.cut;
+      if (cut && !prevCut) { tickBeforeCut = session.tick; cuts.push({ seg: tour.segment.id, ...cut, from: tickBeforeCut, state: null }); }
+      if (cut) assert.equal(session.tick, tickBeforeCut, 'カット表示中は動かない');
+      if (!cut && prevCut) {
+        // ジャンプ直後: 表示の秒数 = 実際に飛んだ sim 秒、state は逐次 step と一致
+        const c = cuts.at(-1);
+        const sg = tour.segment;
+        const jumped = (session.tick - c.from) / TPS;
+        assert.equal(c.text, cutText(jumped));
+        assert.ok(Math.abs(c.skippedSimS - jumped) < 1e-9, `表示 ${c.skippedSimS} と飛んだ ${jumped}`);
+        const ws = sg.windows[tour.windowIndex].startTick;
+        assert.equal(session.tick, ws);
+        assert.deepEqual(session.state, stateAtTick(sg.config, ws));
+        let s = core.createRun(sg.config);
+        while (s.tick < ws) s = core.step(s, sg.config);
+        assert.deepEqual(session.state, s);
+        assert.equal(explanation.queueLength, 0, 'カットで演出キューが空');
+      }
+      prevCut = cut;
     },
   });
   assert.equal(tour.phase, 'done');
-  assert.ok(real >= 35 && real <= 40, `通しの実時間 ${real.toFixed(2)} 秒`);
-  assert.ok(Math.abs(real - plan.totalS) < 0.6, `計画 ${plan.totalS} と実測 ${real}`);
-  assert.deepEqual(log.segments, ['B', 'B', 'A', 'W']); // 先頭は arm（待機）での初期化
+  assert.equal(cuts.length, 4); // B 1・A 1・W 2
+  assert.deepEqual(cuts.map((c) => c.seg), ['B', 'A', 'W', 'W']);
   assert.deepEqual(titles, plan.segments.map((s) => s.title));
-  assert.equal(starts.length, 4); // B, A, W×2
   assert.deepEqual(starts.map((s) => s.seg), ['B', 'A', 'W', 'W']);
   assert.deepEqual(starts.map((s) => s.tick), plan.segments.flatMap((s) => s.events.map((e) => e.tick)));
-  // 最後の区間は終了 tick で止まる
   assert.equal(session.tick, plan.segments[2].endTick);
   assert.equal(session.running, false);
-  console.log(`通しデモ実測 ${real.toFixed(2)} 秒（計画 ${plan.totalS.toFixed(2)} 秒）`);
+  assert.ok(Math.abs(real - plan.totalS) < 0.8, `計画 ${plan.totalS.toFixed(2)} と実測 ${real.toFixed(2)}`);
+  console.log(`通しデモ 実測 ${real.toFixed(2)} 秒（計画 ${plan.totalS.toFixed(2)} 秒・倍率 ${plan.multiplier}）`);
+  console.log(plan.segments.map((s) => `${s.id}: 窓 ${s.windows.map((w) => `${w.startTick}-${w.endTick}`).join(' / ')} カット${s.cutSimS}s 再生${s.playedSimS.toFixed(1)}s`).join(String.fromCharCode(10)));
+  assert.ok(real >= 40 && real <= 45, `合計 ${real.toFixed(2)} 秒が 40〜45 秒に収まる`);
 });
 
-test('各区間の実時間（タイトル・解説を除く）は約 7 秒。倍率と足の周期を確認', () => {
+test('窓の実時間（タイトル・解説を除く）は sim 秒 ÷ 倍率。倍率・足の周期を確認', () => {
   const out = [];
   for (const sg of plan.segments) {
-    const session = createSession(sg.config);
-    session.setCustomMultiplier(sg.multiplier);
-    session.breakTick = sg.endTick;
-    let now = 0;
-    session.play(); session.frame(now);
-    while (session.running) { now += 1000 / 60; session.frame(now); }
-    assert.equal(session.tick, sg.endTick);
-    assert.ok(Math.abs(now / 1000 - PLAY_S) < 0.2, `${sg.id}: ${now / 1000}`);
-    // 足の周期（先頭と区間内の最小・最大）
-    const f0 = buildFrame(stateAtTick(sg.config, 1), sg.config, { speed: sg.multiplier });
-    let min = Infinity;
-    for (let t = 1; t <= sg.endTick; t += 10) {
-      const f = buildFrame(stateAtTick(sg.config, t), sg.config, { speed: sg.multiplier });
-      if (f.world.cycleS !== null) min = Math.min(min, f.world.cycleS);
+    for (const w of sg.windows) {
+      const session = createSession(sg.config);
+      session.jumpTo(w.startTick);
+      session.setCustomMultiplier(sg.multiplier);
+      session.breakTick = w.endTick;
+      let now = 0;
+      session.play(); session.frame(now);
+      while (session.running) { now += 1000 / 60; session.frame(now); }
+      assert.equal(session.tick, w.endTick);
+      assert.ok(Math.abs(now / 1000 - (w.endTick - w.startTick) / TPS / sg.multiplier) < 0.2);
     }
+    const f0 = buildFrame(stateAtTick(sg.config, sg.windows[0].startTick), sg.config, { speed: sg.multiplier });
     const ground = f0.world.speedMps * sg.multiplier * PX_PER_M;
-    out.push(`${sg.id}: 区間${sg.simS.toFixed(1)}s 倍率${sg.multiplier.toFixed(2)} 足周期${f0.world.cycleS.toFixed(3)}s(最小${min.toFixed(3)}) 地面${ground.toFixed(0)}px/s 足${(footPxPerCycle('run') / f0.world.cycleS).toFixed(0)}px/s`);
+    out.push(`${sg.id}: 倍率${sg.multiplier} 足周期${f0.world.cycleS.toFixed(3)}s 地面${ground.toFixed(0)}px/s 足${(footPxPerCycle('run') / f0.world.cycleS).toFixed(0)}px/s`);
     assert.ok(f0.world.cycleS >= CYCLE_MIN_S - 1e-9);
   }
-  console.log(out.join('\n'));
+  console.log(out.join(String.fromCharCode(10)));
 });
 
 test('シナリオ切替: 演出キュー・前の文言・ズームが残らない', () => {
   const { session, explanation, tour, log } = makeTour();
   explanation.addPulse('flow', 0); explanation.addPulse('haptic', 0);
   driveTour({ session, explanation, tour }, {});
-  // 切替ごとにキューが空で、新しい区間は tick 0・通常ペースの字幕
+  // 切替ごとにキューが空で、新しい区間の表示はそのシナリオの state だけ
   assert.deepEqual(log.queueAtSegment, log.segments.map(() => 0));
-  for (const f of log.frameAtSegment) {
-    assert.equal(f.tick, 0);
-    assert.equal(f.judge.kind, 'normal');
-    assert.equal(subtitleFor(null, f), `通常ペース：現在${f.world.bpmText}BPM`);
-  }
+  const expectTicks = [0, ...plan.segments.map((s) => s.windows[0].startTick)];
+  log.frameAtSegment.forEach((f, i) => {
+    const cfg = getScenario(log.segments[i]).config;
+    assert.equal(f.tick, expectTicks[i]);
+    // 切替直後の表示は、そのシナリオを core で逐次 step した state だけから作られる（前のシナリオの値は残らない）
+    assert.deepEqual(f, buildFrame(stateAtTick(cfg, f.tick), cfg, { speed: f.speed }));
+    assert.equal(f.world.crossingX, cfg.route.crossingX);
+  });
   // 切替直前に積まれた演出も、切替で空になる
   const s2 = makeTour();
   s2.tour.arm();
@@ -249,7 +280,7 @@ test('タブ非表示・一時停止・リセット: 通しデモの停止と先
   tour.notePlay(now);
   now += 600000;
   session.frame(now); now += 1000; session.frame(now);
-  assert.ok(session.tick - t <= Math.ceil(plan.segments[0].multiplier * 10 * 1) + 1);
+  assert.ok(session.tick - t <= Math.ceil(plan.multiplier * 10 * 1) + 1);
   // リセット = 通しデモの最初（B）へ
   tour.arm();
   assert.equal(tour.index, 0);
@@ -258,6 +289,7 @@ test('タブ非表示・一時停止・リセット: 通しデモの停止と先
   assert.equal(session.config, getScenario('B').config);
   assert.equal(explanation.queueLength, 0);
   assert.equal(TITLE_MS, 800);
+  assert.equal(CUT_MS, 600);
 });
 
 test('waiting / stopRecommended は B/A/W の RUNWAVE 走行で出るか（出ないなら表示を作らない）', () => {

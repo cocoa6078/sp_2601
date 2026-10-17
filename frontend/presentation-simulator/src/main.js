@@ -2,7 +2,7 @@
 // ズーム・字幕は表示だけの演出（state・時計・tick には触れない）。
 import { SCENARIO_LIST, getScenario, highlightsFor } from './scenarios.js';
 import { createSession, SPEEDS, DEMO_SPEED } from './simulation.js';
-import { buildFrame, subtitleFor } from './demo-view-model.js';
+import { buildFrame } from './demo-view-model.js';
 import { createExplanation, startExplanation, resetDemo } from './explanation-controller.js';
 import { createWorldView, createHud, createProgressBar, WORLD_VIEW, RUNNER_X } from './world-view.js';
 import { createFlowView } from './flow-view.js';
@@ -56,6 +56,7 @@ function resetPresentation() {
 const tour = createTour({
   session,
   explanation,
+  onCut: () => { prevKey = null; explanation.clear(); },
   onSegment: (sg) => {
     scenarioId = sg.id;
     hlIdx = -1;
@@ -229,9 +230,6 @@ function render(now) {
     if (stage && zoomOn) { zoomRects = measureRects(); }
     $('zoom').style.transform = zoomCss(zoomFor(stage, zoomOn, zoomRects));
   }
-  // 字幕（同じ時点の frame から）
-  setText($('subtitle'), subtitleFor(stage, frame));
-  $('subtitle').classList.toggle('hot', stage !== null);
 
   const paused = !session.running;
   world.update(frame, { paused });
@@ -246,6 +244,9 @@ function render(now) {
   const tt = $('tour-title');
   tt.hidden = tour.title === null;
   if (!tt.hidden) setText(tt, tour.title);
+  const cutEl = $('tour-cut');
+  cutEl.hidden = tour.cut === null;
+  if (!cutEl.hidden) setText(cutEl, tour.cut.text);
 
   // 通しデモの実測時間（最初の再生ボタン〜最後の区間の終わり）
   if (tour.phase === 'title' && tourStartMs === null) tourStartMs = now - 0;
@@ -259,16 +260,16 @@ function render(now) {
   } else {
     setText($('scn-label'), `${sc.name}　${sc.blurb}`);
   }
-  const pill = tour.phase === 'title' ? 'タイトル' : tour.phase === 'done' ? '完了' : STATUS_NAMES[status] ?? status;
+  const pill = tour.phase === 'title' ? 'タイトル' : tour.phase === 'cut' ? 'カット' : tour.phase === 'done' ? '完了' : STATUS_NAMES[status] ?? status;
   setText($('status-pill'), pill);
   $('status-pill').dataset.status = status;
   setText($('clock'), `経過 ${frame.t.toFixed(1)} 秒`);
   setText($('speed-label'), session.speedLabel);
   const done = status === 'done' || status === 'limit';
-  const blockedPlay = status === 'error' || status === 'playing' || status === 'explaining' || tour.phase === 'title' || (done && !tour.active);
+  const blockedPlay = status === 'error' || status === 'playing' || status === 'explaining' || tour.phase === 'title' || tour.phase === 'cut' || (done && !tour.active);
   $('btn-play').disabled = blockedPlay;
   $('btn-pause').disabled = status !== 'playing';
-  $('btn-explain').disabled = done || explanation.active || tour.phase === 'title' || tour.phase === 'done';
+  $('btn-explain').disabled = done || explanation.active || tour.phase === 'title' || tour.phase === 'cut' || tour.phase === 'done';
   const hs = highlightsFor(scenarioId);
   $('btn-jump').disabled = tour.active || hs.length === 0 || status === 'playing' || explanation.active;
   $('btn-jump').title = hs.length ? '次の見せ場：' + hs[(hlIdx + 1) % hs.length].label : 'この条件では見せ場がありません';

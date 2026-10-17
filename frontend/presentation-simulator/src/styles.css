@@ -15,7 +15,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 #viewport { position: relative; margin: 0 auto; }
 #stage { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: top left; overflow: hidden; }
 #zoom { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0; transition: transform .35s ease; padding: 16px; display: grid;
-  grid-template-rows: 52px 1fr 340px 56px 52px 34px; gap: 8px; will-change: transform; }
+  grid-template-rows: 52px 1fr 340px 56px 34px; gap: 8px; will-change: transform; }
 #zoom.snap { transition: none; }
 button { font: inherit; font-size: 22px; color: var(--text); background: var(--panel); border: 2px solid var(--line); border-radius: 12px; padding: 0 20px; height: 52px; cursor: pointer; }
 button:hover:not(:disabled) { border-color: var(--mint); }
@@ -192,9 +192,7 @@ button.on { background: #1d4a55; border-color: var(--mint); color: var(--mint); 
 .pb-mark.cross em { color: var(--mint); }
 .pb-dot { position: absolute; top: -8px; width: 24px; height: 24px; margin-left: -12px; border-radius: 50%; background: var(--text); border: 4px solid var(--mint); box-shadow: 0 0 12px var(--mint); }
 
-/* 字幕・タイトル（ズームの外。画面下部の注記の上） */
-#subtitle { position: absolute; left: 16px; right: 16px; bottom: 50px; height: 52px; display: flex; align-items: center; justify-content: center; font-size: 38px; font-weight: 800; color: var(--text); background: rgba(8, 20, 33, .9); border: 2px solid var(--line); border-radius: 14px; white-space: nowrap; overflow: hidden; z-index: 20; }
-#subtitle.hot { border-color: var(--mint); color: var(--mint); box-shadow: 0 0 18px rgba(94, 242, 193, .45); }
+/* タイトル・カット表示（ズームの外） */
 #tour-title { position: absolute; left: 0; right: 0; top: 330px; height: 150px; display: grid; place-items: center; background: rgba(8, 20, 33, .88); font-size: 64px; font-weight: 800; color: var(--mint); z-index: 30; text-align: center; }
 #btn-zoom[aria-pressed="false"] { opacity: .65; }
 button { padding: 0 12px; }
@@ -202,3 +200,4 @@ button { padding: 0 12px; }
 .phone-screen.glow .ph-target { text-shadow: 0 0 14px var(--mint); }
 .watch.glow .w-line { text-shadow: 0 0 14px var(--mint); }
 [hidden] { display: none !important; }
+#tour-cut { position: absolute; left: 50%; top: 200px; transform: translateX(-50%); background: var(--amber); color: #2a1d00; font-size: 56px; font-weight: 800; padding: 10px 40px; border-radius: 999px; z-index: 30; }
