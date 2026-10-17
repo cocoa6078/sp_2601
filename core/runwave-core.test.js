@@ -321,6 +321,15 @@ test('リズムの指標はゴールの瞬間までだけ数える', () => {
   near(last.offBaseTimeS, off, 1e-6);
 });
 
+test('余裕0でも、計画どおりに着けるなら止まらない（窓の端ぎりぎりの到着を避ける）', () => {
+  // 余裕0では、届く範囲に青があるのに止まる位相が出ていた（v0.3.0 初版、例: 位相93）
+  const m0 = (p) => withControl(withPhase(SCENARIOS.A, p), { startMarginS: 0, endMarginS: 0 });
+  for (const p of [93, 94, 98, 99, 100, 103, 104, 107, 108]) assert.equal(compare(m0(p)).runwave.stops, 0, `位相${p}`);
+  let stops = 0;
+  for (let p = 0; p < 120; p++) stops += compare(m0(p)).runwave.stops;
+  assert.equal(stops, 22);  // 届く範囲に青が無い位相の数（理論値）
+});
+
 test('走っている間も longestRunS が更新される', () => {
   let s = createRun(SCENARIOS.B);
   for (let i = 0; i < 100; i++) s = step(s, SCENARIOS.B);

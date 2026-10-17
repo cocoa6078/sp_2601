@@ -114,6 +114,7 @@ export function requiredBpm(distanceM, strideM, arriveInS) {
 // 浮動小数の誤差は安全側に倒す：境界のごく手前（EPS 以内）は次の区間とみなすが、
 // 赤→青の境界だけは「まだ赤」とする（青を早く始めない）。丸めは表示用の remainingS だけ
 const EPS = 1e-9;
+const PLAN_EPS = 1e-6;   // 計画（狙う到着時刻）が窓の端から取る余白（秒）
 export function signalAt(signal, t) {
   validateSignal(signal);
   need(isNum(t), 't は数');
@@ -223,7 +224,10 @@ export function chooseTarget(state, config) {
   const feasible = (c) => {
     const p = predictArrival(state, config, c, ctl);
     if (!p) return false;
-    return windowsUntil(p.arriveT, crossTimeOf(config, p.bpm)).some((w) => p.arriveT >= w.startT && p.arriveT < w.endT);
+    // 窓の端ちょうどの到着は、信号判定（誤差を安全側に倒す）で非青になりうるので、ごくわずかな余白を取る。
+    // 毎秒選び直すと到着が窓の端に寄るため、余裕0の設定で必要になる
+    return windowsUntil(p.arriveT, crossTimeOf(config, p.bpm))
+      .some((w) => p.arriveT >= w.startT + PLAN_EPS && p.arriveT < w.endT - PLAN_EPS);
   };
 
   // 到着時刻は目標BPMが高いほど早い（単調）。最速と最遅の到着の間に安全な窓が無ければ、どの候補も不可
