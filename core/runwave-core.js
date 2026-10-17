@@ -2,7 +2,7 @@
 // 単位: 時間=秒(s)、距離=m、BPM=歩/分（1拍=1歩。心拍数ではない）
 // 契約の詳細は core/CONTRACT.md（作業票 v4 準拠）
 
-export const CORE_VERSION = '0.4.0';
+export const CORE_VERSION = '0.4.1';
 export const DT = 0.1;          // 固定刻み（秒）。可変 dt には対応しない
 const TPS = 10;                 // ticks per second（t = tick / TPS で浮動小数誤差を避ける）
 

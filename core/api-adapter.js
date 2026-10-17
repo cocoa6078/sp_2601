@@ -44,7 +44,9 @@ export function extractSignals(json) {
       problems.push(`greenS+yellowS+redS（${src.greenS + src.yellowS + src.redS}）が cycleS（${src.cycleS}）と一致しない`);
     }
     const signal = problems.length ? null : Object.fromEntries(SIGNAL_FIELDS.map((k) => [k, src[k]]));
-    return { index, id: src?.signalId ?? null, note: src?.note ?? null, signal, problems };
+    // 座標（API と同じ名前 lat / lon）。数値でなければ null。信号の判定には使わない（地図の表示用）
+    const coord = (v) => (isNum(v) ? v : null);
+    return { index, id: src?.signalId ?? null, note: src?.note ?? null, lat: coord(src?.lat), lon: coord(src?.lon), signal, problems };
   });
 }
 

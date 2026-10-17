@@ -97,3 +97,12 @@ test('extractRunner: バックエンドが保存後に返す NormalBPM と、早
   assert.deepEqual(extractRunner({ '歩幅': 0.8, '通常BPM': 150 }).runner, { strideM: 0.8, baseBpm: 150 });  // walkStrideM は任意
   assert.equal(extractRunner({ '歩幅': 0.8, '通常BPM': 150, walkStrideM: -1 }).runner, null);
 });
+
+test('extractSignals: API の座標（lat / lon）を残す。無いときは null', () => {
+  const [a] = extractSignals({ 'ステータス': '成功', 'データ': [{ signalId: 'x', cycleS: 100, greenS: 40, yellowS: 5, redS: 55, phaseS: 0, crossingM: 15, lat: 43.06, lon: 141.35 }] });
+  assert.equal(a.lat, 43.06);
+  assert.equal(a.lon, 141.35);
+  const [b] = extractSignals([{ cycleS: 100, greenS: 40, yellowS: 5, redS: 55, phaseS: 0, crossingM: 15 }]);
+  assert.equal(b.lat, null);
+  assert.equal(b.lon, null);
+});
