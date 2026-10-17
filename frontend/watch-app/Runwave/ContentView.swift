@@ -7,6 +7,8 @@
 //  .pbxproj への登録を不要にするため、全ての型をこのファイルに入れている。
 //
 //  - 対象: iOS 16+（ObservableObject / @Published / @StateObject。@Observable・#Preview は使わない）
+//    ただし終了地点の地図（GoalMapView.swift）は iOS 17+ の MapKit API を使う（Deployment Target は 26.2）
+//  - 終了地点（GoalMapView.swift）と信号のイラスト（SignalLightView.swift）は別ファイル
 //  - WatchConnectivity は WatchConnectivityLink.swift に分離
 //  - 信号・到着予測・目標ケイデンスの計算は書かない（目標は手動設定のみ）
 //
@@ -156,6 +158,11 @@ final class SessionStore: ObservableObject {
     @Published private(set) var summary: SessionSummary?
     /// DEBUG ビルドでのみ true にできる（リリースでは常に false）
     @Published private(set) var isDemoMode: Bool = false
+    /// 終了地点（任意）。未設定でもセッションは開始できる。
+    /// TODO(連携): 終了地点を送るかは Watch/シミュレーターと要合意（現状は iPhone 内のみで保持）
+    @Published private(set) var goal: GoalPoint?
+    /// 最後に受け取った信号情報。nil は未受信。iPhone では色を計算しない。
+    @Published private(set) var latestSignal: SignalInfo?
 
     // MARK: 経過時間（iPhone の時計で積算。一時停止中は増えない）
     private var accumulated: TimeInterval = 0
@@ -198,6 +205,46 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    // MARK: 終了地点
+
+    /// 終了地点を設定する。緯度経度が不正な値なら無視する。
+    func setGoal(_ point: GoalPoint) {
+        guard point.isValid else { return }
+        goal = point
+    }
+
+    /// 終了地点を未設定に戻す。
+    func clearGoal() {
+        goal = nil
+    }
+
+    // MARK: 信号
+
+    /// 信号情報を受け取る。
+    /// TODO(連携): シミュレーター/Watch から受け取る経路は未実装
+    func receiveSignal(_ info: SignalInfo?) {
+        // デモ値表示中は実際の受信値で上書きしない（見分けがつかなくなるため）
+        guard !isDemoMode else { return }
+        latestSignal = info
+    }
+
+    /// デモ用に信号の色を切り替える（DEBUG 限定。デモモード中のみ有効）。
+    func setDemoSignal(_ color: SignalColor) {
+        #if DEBUG
+        guard isDemoMode else { return }
+        latestSignal = Self.makeDemoSignal(color)
+        #endif
+    }
+
+    private static func makeDemoSignal(_ color: SignalColor) -> SignalInfo {
+        SignalInfo(color: color, remainingS: color == .flashing ? 5 : 12)
+    }
+
+    /// 信号を初期状態に戻す（デモ中はデモ値、そうでなければ nil）。
+    private func resetSignal() {
+        latestSignal = isDemoMode ? Self.makeDemoSignal(.green) : nil
+    }
+
     private func makeCommand() -> TargetCommand {
         TargetCommand(
             targetCadence: targetCadence,
@@ -220,6 +267,7 @@ final class SessionStore: ObservableObject {
         runStartedAt = Date()
         summary = nil
         resetMetrics()
+        resetSignal()
         workoutState = .running
         screen = .session
         link.workoutDidStart(sessionID: sessionID)
@@ -261,6 +309,7 @@ final class SessionStore: ObservableObject {
         runStartedAt = nil
         summary = nil
         resetMetrics()
+        resetSignal()
         screen = .home
     }
 
@@ -305,6 +354,7 @@ final class SessionStore: ObservableObject {
         #if DEBUG
         isDemoMode = on
         resetMetrics()
+        resetSignal()
         #endif
     }
 
@@ -355,7 +405,7 @@ private func formatDistance(_ meters: Double?) -> String {
 // MARK: - 共通パーツ
 
 /// デモ値を示すバッジ。実測値と見分けるため、デモ表示のときは必ず出す。
-private struct DemoBadge: View {
+struct DemoBadge: View {
     var body: some View {
         Text("デモ値")
             .font(.caption2.bold())
@@ -454,6 +504,7 @@ private struct CadenceStepper: View {
 
 private struct HomeView: View {
     @ObservedObject var store: SessionStore
+    @State private var showGoalMap = false
 
     var body: some View {
         ScrollView {
@@ -491,6 +542,8 @@ private struct HomeView: View {
                 .padding(20)
                 .background(CardBackground())
 
+                goalCard
+
                 if store.connectionState == .notConnected {
                     Text("Watch未接続：目標値はこの iPhone 内で保持されます")
                         .font(.footnote)
@@ -521,6 +574,49 @@ private struct HomeView: View {
             .padding(.vertical, 12)
             .background(.ultraThinMaterial)
         }
+        .sheet(isPresented: $showGoalMap) {
+            GoalMapView(initialGoal: store.goal) { newGoal in
+                if let point = newGoal {
+                    store.setGoal(point)
+                } else {
+                    store.clearGoal()
+                }
+            }
+        }
+    }
+
+    /// 終了地点カード（任意項目）。未設定なら「未設定」、設定済みなら地図プレビューと緯度経度。
+    private var goalCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("終了地点（任意）")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+
+            if let goal = store.goal {
+                GoalPreviewMap(goal: goal)
+                    .frame(height: 140)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                Text(goal.coordinateText)
+                    .font(.footnote)
+                    .monospacedDigit()
+                    .foregroundColor(.secondary)
+            } else {
+                Text("未設定")
+                    .font(.title3.bold())
+                    .foregroundColor(.secondary)
+            }
+
+            Button {
+                showGoalMap = true
+            } label: {
+                Label("地図で設定", systemImage: "map")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(20)
+        .background(CardBackground())
     }
 
     #if DEBUG
@@ -584,6 +680,39 @@ private struct SessionView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(16)
                 .background(CardBackground())
+
+                // 信号のイラスト（受け取った値を描くだけ）
+                VStack(alignment: .leading, spacing: 12) {
+                    SignalLightView(signal: store.latestSignal, isDemo: store.isDemoMode)
+                    #if DEBUG
+                    if store.isDemoMode {
+                        Picker("信号（デモ）", selection: Binding<SignalColor>(
+                            get: { store.latestSignal?.color ?? SignalColor.green },
+                            set: { store.setDemoSignal($0) }
+                        )) {
+                            Text("赤").tag(SignalColor.red)
+                            Text("青").tag(SignalColor.green)
+                            Text("青点滅").tag(SignalColor.flashing)
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                    #endif
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(16)
+                .background(CardBackground())
+
+                // 終了地点（任意）の設定状況
+                HStack(spacing: 8) {
+                    Image(systemName: "mappin.and.ellipse")
+                        .foregroundColor(.secondary)
+                    Text(store.goal == nil ? "終了地点：未設定" : "終了地点：設定済み")
+                        .font(.subheadline)
+                        .foregroundColor(store.goal == nil ? Color.secondary : Color.primary)
+                    Spacer()
+                }
+                .padding(.horizontal, 4)
+                .accessibilityElement(children: .combine)
 
                 // 現在ケイデンス
                 MetricCard(
