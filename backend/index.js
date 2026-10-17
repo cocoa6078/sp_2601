@@ -8,14 +8,28 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// 2点間の緯度経度から実際の直線距離（メートル）を算出するハーバーサイン公式
+function calculateDistanceM(lat1, lon1, lat2, lon2) {
+  const R = 6371e3; // 地球の半径 (m)
+  const φ1 = lat1 * Math.PI / 180;
+  const φ2 = lat2 * Math.PI / 180;
+  const Δφ = (lat2 - lat1) * Math.PI / 180;
+  const Δλ = (lon2 - lon1) * Math.PI / 180;
+
+  const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+            Math.cos(φ1) * Math.cos(φ2) *
+            Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return R * c; // メートル単位
+}
+
 // ---------------------------------------------------------
 // 0. ファイルパスおよびストレージの初期設定
 // ---------------------------------------------------------
 const logsFilePath = path.join(__dirname, 'logs.json');
 
-// ---------------------------------------------------------
 // キャリブレーション設定データの初期値（早歩き歩幅を追加）
-// ---------------------------------------------------------
 let userCalibrationData = { 
   歩幅: 0.8, 
   通常BPM: 150, 
@@ -41,33 +55,53 @@ let signalsData = [];
 let allSignalsDataF02 = [];
 
 try {
-  // 全データの読み込み
+  // 1. 全データの読み込み
   const fullDataPath = path.join(__dirname, 'CSVtoDataset', 'hokkaido_all_signals.json');
   const fullRawData = fs.readFileSync(fullDataPath, 'utf-8');
   const allHokkaidoData = JSON.parse(fullRawData);
 
-  // 【P2拡張用】全データをF-02フォーマットへ変換（マップ描画などに利用）
+  // 2. スクレイピングした正確な緯度経度データの読み込み
+  const scrapedCoordPath = path.join(__dirname, 'scraped_coordinates.json');
+  let coordMap = {};
+  if (fs.existsSync(scrapedCoordPath)) {
+    const scrapedData = JSON.parse(fs.readFileSync(scrapedCoordPath, 'utf-8'));
+    // 地域インデックス（page_id）と交差点番号をキーにして緯度経度をマップ化
+    // page_id: 1=札幌方面, 2=旭川方面, 3=函館方面, 4=釧路方面, 5=北見方面 の順序に対応
+    const pageIdToRegion = { 1: "札幌方面", 2: "旭川方面", 3: "函館方面", 4: "釧路方面", 5: "北見方面" };
+    scrapedData.forEach(item => {
+      const regionName = pageIdToRegion[item.page_id];
+      const key = `${regionName}_${item.交差点番号}`;
+      coordMap[key] = { lat: item["緯度"], lon: item["経度"] };
+    });
+    console.log(`✅ 正確な座標データ(${scrapedData.length}件)のロード完了`);
+  }
+
+  // 3. 全データをF-02フォーマットへ変換（スクレイピング座標を結合）
   allSignalsDataF02 = allHokkaidoData.map(signal => {
     const greenS = Math.max(0, signal["青信号時間"] - 5); 
     const yellowS = 5;
     const redS = signal["赤信号時間"];
     const cycleS = greenS + yellowS + redS; 
 
+    // スクレイピングで取得した正確な座標があれば上書き、なければ元の値を使用
+    const coordKey = `${signal["地域"]}_${signal["交差点番号"]}`;
+    const preciseCoord = coordMap[coordKey];
+    const lat = preciseCoord ? preciseCoord.lat : signal["緯度"];
+    const lon = preciseCoord ? preciseCoord.lon : signal["経度"];
+
     return {
-      //signalId: `hokkaido_${signal["地域"]}_${signal["交差点番号"]}`,
-      signalId: `sapporo_${signal["交差点番号"]}`,
+      signalId: `hokkaido_${signal["地域"]}_${signal["交差点番号"]}`,
       region: signal["地域"],
-      lat: signal["緯度"],
-      lon: signal["経度"],
+      lat: lat,
+      lon: lon,
       cycleS: cycleS,
       greenS: greenS,
       yellowS: yellowS,
       redS: redS,
       phaseS: 0,
       crossingM: 15.0,
-      isEstimated: true, // 推定値フラグ
-      //note: "※JARTICビッグデータ抽出分"
-      note: "※車両用信号のスプリット由来、黄は5秒固定、位相は仮（15秒ずらし）の推定値です。"
+      isEstimated: true,
+      note: "※JARTICビッグデータ抽出分（実測・スクレイピング座標適用）"
     };
   });
   console.log(`✅ 全データロード成功: ${allSignalsDataF02.length}件のF-02変換完了`);
@@ -81,53 +115,55 @@ try {
   // 指定順序 (3 -> 8 -> 2 -> 1 -> 5) でソート
   const orderMap = { 3: 1, 8: 2, 2: 3, 1: 4, 5: 5 };
   filteredData.sort((a, b) => orderMap[a["交差点番号"]] - orderMap[b["交差点番号"]]);
-  /*
-  // デモ用配列の生成（動的位相計算版）
+
+  // デモ用配列の生成（ハーバーサイン公式による動的距離計算版：正確な座標を使用）
+  let accumulatedDistance = 0;
   signalsData = filteredData.map((signal, index) => {
     const greenS = Math.max(0, signal["青信号時間"] - 5);
     const yellowS = 5;
     const redS = signal["赤信号時間"];
     const cycleS = greenS + yellowS + redS;
-
     const dynamicPhaseS = index * 15;
+
+    // 正確な座標を適用
+    const coordKey = `${signal["地域"]}_${signal["交差点番号"]}`;
+    const preciseCoord = coordMap[coordKey];
+    const lat = preciseCoord ? preciseCoord.lat : signal["緯度"];
+    const lon = preciseCoord ? preciseCoord.lon : signal["経度"];
+
+    let distanceFromStartM = 0;
+    if (index === 0) {
+      accumulatedDistance = 0;
+      distanceFromStartM = 0;
+    } else {
+      const prevSignal = filteredData[index - 1];
+      const prevCoordKey = `${prevSignal["地域"]}_${prevSignal["交差点番号"]}`;
+      const prevPreciseCoord = coordMap[prevCoordKey];
+      const prevLat = prevPreciseCoord ? prevPreciseCoord.lat : prevSignal["緯度"];
+      const prevLon = prevPreciseCoord ? prevPreciseCoord.lon : prevSignal["経度"];
+
+      const dist = calculateDistanceM(prevLat, prevLon, lat, lon);
+      accumulatedDistance += dist;
+      distanceFromStartM = Math.round(accumulatedDistance); // 整数値に丸める
+    }
 
     return {
       signalId: `sapporo_${signal["交差点番号"]}`,
+      orderIndex: index + 1,
+      lat: lat,
+      lon: lon,
+      distanceFromStartM: distanceFromStartM, // 動的計算された累積距離 (m)
       cycleS: cycleS,
       greenS: greenS,
       yellowS: yellowS,
       redS: redS,
       phaseS: dynamicPhaseS,
       crossingM: 15.0,
-      note: "※JARTIC由来の参考プリセット（車両用データ流用・位相自動計算版）"
+      isEstimated: true,
+      note: "※車両用信号のスプリット由来、黄は5秒固定、位相は仮（15秒ずらし）の推定値です。"
     };
   });
-  */
-  signalsData = filteredData.map((signal, index) => {
-    const greenS = Math.max(0, signal["青信号時間"] - 5); 
-    const yellowS = 5;
-    const redS = signal["赤信号時間"];
-    const cycleS = greenS + yellowS + redS; 
-
-    // 仮のコース上の累積距離（m）を付与（例: 0m, 350m, 700m, 1050m, 1400m）
-    const estimatedDistances = [0, 350, 700, 1050, 1400];
-
-    return {
-      signalId: `sapporo_${signal["交差点番号"]}`,
-      orderIndex: index + 1,                    // 交差点的順序
-      lat: signal["緯度"] || 43.0687,           // 緯度
-      lon: signal["経度"] || 141.3508,          // 経度
-      distanceFromStartM: estimatedDistances[index], // スタートからの距離(m)
-      cycleS: cycleS,
-      greenS: greenS,
-      yellowS: yellowS,
-      redS: redS,
-      phaseS: index * 15,
-      crossingM: 15.0,
-      note: "※JARTIC由来の参考プリセット（車両用データ流用）"
-    };
-  });
-  console.log(`✅ デモ用データ準備完了: ${signalsData.length} 件抽出`);
+  console.log(`✅ デモ用データ準備完了（実測座標・動的距離計算版）: ${signalsData.length} 件抽出`);
 } catch (error) {
   console.error("❌ データの読み込みに失敗しました:", error.message);
 }
@@ -166,12 +202,10 @@ app.post('/api/calibration', (req, res) => {
   const body = req.body ?? {};
   const { 歩幅, 通常BPM, walkStrideM } = body;
   
-  // 基本項目のバリデーション
   if (typeof 歩幅 !== 'number' || 歩幅 <= 0 || typeof 通常BPM !== 'number' || 通常BPM <= 0) {
     return res.status(400).json({ ステータス: "エラー", メッセージ: "歩幅と通常BPMは正の数値である必要があります。" });
   }
 
-  // 早歩き歩幅（任意項目）が送信された場合のバリデーション
   if (walkStrideM !== undefined && (typeof walkStrideM !== 'number' || walkStrideM <= 0)) {
     return res.status(400).json({ ステータス: "エラー", メッセージ: "早歩きの歩幅は正の数値である必要があります。" });
   }
@@ -194,7 +228,6 @@ app.get('/api/calibration', (req, res) => {
 });
 
 // [POST] 走行ログの保存
-// 詳細な走行履歴（history）を受け取る POST /api/logs の拡張
 app.post('/api/logs', (req, res) => {
   const logData = req.body ?? {};
   
@@ -202,13 +235,11 @@ app.post('/api/logs', (req, res) => {
     return res.status(400).json({ ステータス: "エラー", メッセージ: "データが空です" });
   }
 
-  // gait（走り/早歩き）が指定されている場合のバリデーション
   const { gait, walkCount, walkTimeS, walkDistanceM } = logData;
   if (gait !== undefined && gait !== "run" && gait !== "walk") {
     return res.status(400).json({ ステータス: "エラー", メッセージ: "gaitは run または walk である必要があります。" });
   }
 
-  // 数値項目の負の値チェック
   if (
     (walkCount !== undefined && (typeof walkCount !== 'number' || walkCount < 0)) ||
     (walkTimeS !== undefined && (typeof walkTimeS !== 'number' || walkTimeS < 0)) ||
@@ -238,6 +269,7 @@ app.post('/api/logs', (req, res) => {
   });
 });
 
+// [GET] 走行ログ単件取得
 app.get('/api/logs/:id', (req, res) => {
   const logId = req.params.id;
   const targetLog = runLogs.find(log => log.id === logId);
