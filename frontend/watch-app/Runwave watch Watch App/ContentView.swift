@@ -63,8 +63,10 @@ struct ContentView: View {
         }
         .onChange(of: crownCadence) { _, value in
             guard isDemoRunning else { return }
-            let delta = Int(value.rounded()) - connectivity.targetCadence
-            if delta != 0 { connectivity.adjustTargetCadence(by: delta) }
+            let cadence = Int(value.rounded())
+            if cadence != connectivity.targetCadence {
+                connectivity.setTargetCadenceFromCrown(cadence)
+            }
         }
         .task(id: playbackTaskKey) {
             guard let configuration = playbackConfiguration else { return }
@@ -88,7 +90,7 @@ struct ContentView: View {
 
     private var playbackConfiguration: TempoPlaybackConfiguration? {
         guard isDemoRunning, !isPaused, scenePhase == .active,
-              connectivity.outputSettings.mode != .off else { return nil }
+              connectivity.outputSettings.mode == .haptic || connectivity.outputSettings.mode == .audio else { return nil }
         return TempoPlaybackConfiguration(
             cadence: connectivity.guidedCadence,
             settings: connectivity.outputSettings,
@@ -164,6 +166,11 @@ struct ContentView: View {
                     .foregroundStyle(.orange)
                     .lineLimit(2)
                     .minimumScaleFactor(0.8)
+            } else if !connectivity.crownSyncStatus.isEmpty {
+                Text(connectivity.crownSyncStatus)
+                    .font(.system(size: 9))
+                    .foregroundStyle(connectivity.crownSyncStatus == "iPhone同期済み" ? .green : .secondary)
+                    .lineLimit(1)
             }
 
             HStack(spacing: 8) {

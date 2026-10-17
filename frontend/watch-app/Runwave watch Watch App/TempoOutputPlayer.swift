@@ -90,6 +90,8 @@ final class TempoOutputPlayer: ObservableObject {
                     }
                 case .off:
                     return
+                case .iphoneAudio:
+                    return
                 }
 
                 beats += 1

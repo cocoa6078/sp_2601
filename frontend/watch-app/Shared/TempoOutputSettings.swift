@@ -1,12 +1,13 @@
 import Foundation
 
 enum TempoOutputMode: String, Codable, CaseIterable, Identifiable {
-    case haptic, audio, off
+    case haptic, audio, iphoneAudio, off
     var id: String { rawValue }
     var label: String {
         switch self {
         case .haptic: return "振動"
         case .audio: return "音"
+        case .iphoneAudio: return "iPhone音"
         case .off: return "停止"
         }
     }

@@ -16,6 +16,8 @@
 import SwiftUI
 import Foundation
 import Combine
+import Charts
+import MapKit
 
 // MARK: - 基本の型
 
@@ -99,7 +101,7 @@ protocol WatchLink: AnyObject {
     var onConnectionChange: ((WatchConnectionState) -> Void)? { get set }
     var onGoalSetupRequested: ((String?) -> Void)? { get set }
     var onWorkoutControl: ((String) -> Void)? { get set }
-    var onTargetCadenceAdjustment: ((Int) -> Void)? { get set }
+    var onTargetCadenceChange: ((Int) -> Void)? { get set }
     var onOutputSettingsApplied: ((TempoOutputSettings) -> Void)? { get set }
     var onOutputError: ((String) -> Void)? { get set }
     func updateOutputSettings(_ settings: TempoOutputSettings)
@@ -109,7 +111,7 @@ protocol WatchLink: AnyObject {
     func send(_ command: TargetCommand)
 
     // ワークアウトの状態変化の通知
-    func workoutDidStart(sessionID: UUID)
+    func workoutDidStart(sessionID: UUID, activityMode: ActivityMode)
     func workoutDidPause()
     func workoutDidResume()
     func workoutDidEnd(elapsed: TimeInterval, distance: Double?, averageCadence: Int?, activityMode: ActivityMode)
@@ -122,14 +124,14 @@ final class NoWatchLink: WatchLink {
     var onConnectionChange: ((WatchConnectionState) -> Void)?
     var onGoalSetupRequested: ((String?) -> Void)?
     var onWorkoutControl: ((String) -> Void)?
-    var onTargetCadenceAdjustment: ((Int) -> Void)?
+    var onTargetCadenceChange: ((Int) -> Void)?
     var onOutputSettingsApplied: ((TempoOutputSettings) -> Void)?
     var onOutputError: ((String) -> Void)?
     func updateOutputSettings(_ settings: TempoOutputSettings) {}
     func previewOutput(targetCadence: Int, activityMode: ActivityMode) {}
 
     func send(_ command: TargetCommand) {}
-    func workoutDidStart(sessionID: UUID) {}
+    func workoutDidStart(sessionID: UUID, activityMode: ActivityMode) {}
     func workoutDidPause() {}
     func workoutDidResume() {}
     func workoutDidEnd(elapsed: TimeInterval, distance: Double?, averageCadence: Int?, activityMode: ActivityMode) {}
@@ -155,6 +157,62 @@ struct SessionSummary: Equatable {
     var activityMode: ActivityMode
 }
 
+/// 端末内に保存するワークアウト履歴。
+struct WorkoutRecord: Identifiable, Codable, Equatable {
+    var id: UUID
+    var date: Date
+    var activityMode: ActivityMode
+    var elapsed: TimeInterval
+    var distance: Double?
+    var averageCadence: Int?
+    var isDemo: Bool
+    var route: [WorkoutCoordinate]
+    var speedSamples: [WorkoutSpeedSample]
+    var stopCount: Int
+
+    init(summary: SessionSummary, date: Date = Date(), route: [WorkoutCoordinate] = [], speedSamples: [WorkoutSpeedSample] = [], stopCount: Int = 0) {
+        id = UUID()
+        self.date = date
+        activityMode = summary.activityMode
+        elapsed = summary.elapsed
+        distance = summary.distance
+        averageCadence = summary.averageCadence
+        isDemo = summary.isDemo
+        self.route = route
+        self.speedSamples = speedSamples
+        self.stopCount = stopCount
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, date, activityMode, elapsed, distance, averageCadence, isDemo, route, speedSamples, stopCount }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id)
+        date = try values.decode(Date.self, forKey: .date)
+        activityMode = try values.decode(ActivityMode.self, forKey: .activityMode)
+        elapsed = try values.decode(TimeInterval.self, forKey: .elapsed)
+        distance = try values.decodeIfPresent(Double.self, forKey: .distance)
+        averageCadence = try values.decodeIfPresent(Int.self, forKey: .averageCadence)
+        isDemo = try values.decodeIfPresent(Bool.self, forKey: .isDemo) ?? false
+        route = try values.decodeIfPresent([WorkoutCoordinate].self, forKey: .route) ?? []
+        speedSamples = try values.decodeIfPresent([WorkoutSpeedSample].self, forKey: .speedSamples) ?? []
+        stopCount = try values.decodeIfPresent(Int.self, forKey: .stopCount) ?? 0
+    }
+
+    private static let storageKey = "runwave.workoutRecords.v1"
+
+    static func load() -> [WorkoutRecord] {
+        guard let data = UserDefaults.standard.data(forKey: storageKey),
+              let records = try? JSONDecoder().decode([WorkoutRecord].self, from: data) else { return [] }
+        return records.sorted { $0.date > $1.date }
+    }
+
+    static func save(_ records: [WorkoutRecord]) {
+        guard let data = try? JSONEncoder().encode(records) else { return }
+        UserDefaults.standard.set(data, forKey: storageKey)
+    }
+}
+
 /// 1 つの数値を画面に出すときの表示内容。
 struct MetricDisplay {
     let text: String
@@ -167,6 +225,7 @@ struct MetricDisplay {
 
 // MARK: - 状態管理
 
+@MainActor
 final class SessionStore: ObservableObject {
 
     // 目標ケイデンスの範囲（歩/分）
@@ -183,6 +242,7 @@ final class SessionStore: ObservableObject {
     @Published private(set) var activityMode: ActivityMode = .running
     @Published private(set) var screen: AppScreen = .home
     @Published private(set) var summary: SessionSummary?
+    @Published private(set) var workoutRecords = WorkoutRecord.load()
     /// DEBUG ビルドでのみ true にできる（リリースでは常に false）
     @Published private(set) var isDemoMode: Bool = false
     /// 終了地点。未設定の場合はセッションを開始できない。
@@ -194,6 +254,8 @@ final class SessionStore: ObservableObject {
     @Published private(set) var goalSetupActivityMode: ActivityMode?
     /// 最後に受け取った信号情報。nil は未受信。iPhone では色を計算しない。
     @Published private(set) var latestSignal: SignalInfo?
+    let routeTracker = WorkoutRouteTracker()
+    private let iphoneTempoOutputPlayer = IPhoneTempoOutputPlayer()
 
     // MARK: 経過時間（iPhone の時計で積算。一時停止中は増えない）
     private var accumulated: TimeInterval = 0
@@ -205,6 +267,18 @@ final class SessionStore: ObservableObject {
     init(link: any WatchLink = NoWatchLink()) {
         self.link = link
         self.connectionState = link.connectionState
+
+        routeTracker.onMetrics = { [weak self] cadence, distance, averageCadence in
+            guard let self else { return }
+            let old = self.latestMetrics
+            self.latestMetrics = WatchMetrics(
+                currentCadence: cadence ?? old?.currentCadence,
+                heartRate: old?.heartRate,
+                distance: distance > 0 ? distance : old?.distance,
+                averageCadence: averageCadence ?? old?.averageCadence,
+                receivedAt: Date()
+            )
+        }
 
         link.onMetrics = { [weak self] metrics in
             DispatchQueue.main.async { self?.handleMetrics(metrics) }
@@ -225,9 +299,9 @@ final class SessionStore: ObservableObject {
                 else if action == "end" { self?.end() }
             }
         }
-        link.onTargetCadenceAdjustment = { [weak self] delta in
+        link.onTargetCadenceChange = { [weak self] cadence in
             DispatchQueue.main.async {
-                self?.adjustTargetCadence(by: delta)
+                self?.applyWatchTargetCadence(cadence)
             }
         }
         link.onOutputSettingsApplied = { [weak self] settings in
@@ -265,10 +339,22 @@ final class SessionStore: ObservableObject {
         guard bounded != targetCadence else { return }
         targetCadence = bounded
         cadenceAdjustment = bounded - cadenceBaseline
+        guidedCadence = nil
         // ホームでの変更は「開始時」にまとめて送る。セッション中だけ即時送信する。
         if workoutState == .running || workoutState == .paused {
             sendCurrentTarget()
         }
+        updateIPhoneTempoOutput()
+    }
+
+    /// Watchから受けた値はiPhone表示へ反映し、Watchへ送り返さない。
+    private func applyWatchTargetCadence(_ value: Int) {
+        let range = cadenceRange
+        let bounded = min(max(value, range.lowerBound), range.upperBound)
+        targetCadence = bounded
+        cadenceAdjustment = bounded - cadenceBaseline
+        guidedCadence = nil
+        updateIPhoneTempoOutput()
     }
 
     /// 測定した自然なケイデンスを基準に±5する。上限で一時的に丸めても基準からの差を保つ。
@@ -280,7 +366,9 @@ final class SessionStore: ObservableObject {
         guard next != targetCadence else { return }
         cadenceAdjustment = next - cadenceBaseline
         targetCadence = next
+        guidedCadence = nil
         if workoutState == .running || workoutState == .paused { sendCurrentTarget() }
+        updateIPhoneTempoOutput()
     }
 
     /// 信号制御が選んだ案内値をWatchへ反映する。nilなら通常目標に戻す。
@@ -292,6 +380,7 @@ final class SessionStore: ObservableObject {
             guidedCadence = nil
         }
         if workoutState == .running || workoutState == .paused { sendCurrentTarget() }
+        updateIPhoneTempoOutput()
     }
 
     // MARK: Watch のテンポ出力
@@ -321,11 +410,26 @@ final class SessionStore: ObservableObject {
         settings.save()
         outputSyncMessage = connectionState == .connected ? "Watchへ反映中…" : "Watch接続時に設定を反映します"
         link.updateOutputSettings(settings)
+        updateIPhoneTempoOutput()
     }
 
     func previewOutput() {
+        guard outputSettings.mode != .off else { return }
+        if outputSettings.mode == .iphoneAudio {
+            iphoneTempoOutputPlayer.preview(cadence: guidedCadence ?? targetCadence, volume: outputSettings.volume)
+            return
+        }
         guard connectionState == .connected else { return }
         link.previewOutput(targetCadence: targetCadence, activityMode: activityMode)
+    }
+
+    private func updateIPhoneTempoOutput() {
+        iphoneTempoOutputPlayer.update(
+            isRunning: workoutState == .running,
+            mode: outputSettings.mode,
+            cadence: guidedCadence ?? targetCadence,
+            volume: outputSettings.volume
+        )
     }
 
     // MARK: 終了地点
@@ -408,9 +512,11 @@ final class SessionStore: ObservableObject {
         resetSignal()
         workoutState = .running
         screen = .session
+        updateIPhoneTempoOutput()
+        routeTracker.start()
         link.updateOutputSettings(outputSettings)
         sendCurrentTarget()
-        link.workoutDidStart(sessionID: sessionID)
+        link.workoutDidStart(sessionID: sessionID, activityMode: activityMode)
     }
 
     private func normalizedCadence(_ value: Int) -> Int {
@@ -422,6 +528,8 @@ final class SessionStore: ObservableObject {
         guard workoutState == .running else { return }
         freezeElapsed()
         workoutState = .paused
+        updateIPhoneTempoOutput()
+        routeTracker.pause()
         link.workoutDidPause()
     }
 
@@ -429,20 +537,32 @@ final class SessionStore: ObservableObject {
         guard workoutState == .paused else { return }
         runStartedAt = Date()
         workoutState = .running
+        updateIPhoneTempoOutput()
+        routeTracker.resume()
         link.workoutDidResume()
     }
 
     func end() {
         guard workoutState == .running || workoutState == .paused else { return }
         freezeElapsed()
+        let measured = routeTracker.finish()
         workoutState = .ended
-        summary = SessionSummary(
+        updateIPhoneTempoOutput()
+        let finishedSummary = SessionSummary(
             elapsed: accumulated,
-            distance: latestMetrics?.distance,
-            averageCadence: latestMetrics?.averageCadence,
+            distance: measured.distance ?? latestMetrics?.distance,
+            averageCadence: measured.averageCadence ?? latestMetrics?.averageCadence,
             isDemo: isDemoMode,
             activityMode: activityMode
         )
+        summary = finishedSummary
+        workoutRecords.insert(WorkoutRecord(
+            summary: finishedSummary,
+            route: routeTracker.route.map(WorkoutCoordinate.init),
+            speedSamples: routeTracker.speedSamples,
+            stopCount: routeTracker.stopCount
+        ), at: 0)
+        WorkoutRecord.save(workoutRecords)
         screen = .result
         link.workoutDidEnd(
             elapsed: summary?.elapsed ?? accumulated,
@@ -455,12 +575,30 @@ final class SessionStore: ObservableObject {
     /// 結果画面からホームへ戻る。
     func returnHome() {
         workoutState = .idle
+        updateIPhoneTempoOutput()
         accumulated = 0
         runStartedAt = nil
         summary = nil
         resetMetrics()
+        routeTracker.reset()
         resetSignal()
         screen = .home
+    }
+
+    func deleteWorkoutRecord(_ id: UUID) {
+        workoutRecords.removeAll { $0.id == id }
+        WorkoutRecord.save(workoutRecords)
+    }
+
+    func deleteWorkoutRecords(_ ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        workoutRecords.removeAll { ids.contains($0.id) }
+        WorkoutRecord.save(workoutRecords)
+    }
+
+    func clearWorkoutRecords() {
+        workoutRecords.removeAll()
+        WorkoutRecord.save(workoutRecords)
     }
 
     /// 動いている時計を止めて accumulated に取り込む。
@@ -476,7 +614,14 @@ final class SessionStore: ObservableObject {
     private func handleMetrics(_ metrics: WatchMetrics) {
         // デモ値表示中は実測値で上書きしない（見分けがつかなくなるため）
         guard !isDemoMode else { return }
-        latestMetrics = metrics
+        let previous = latestMetrics
+        latestMetrics = WatchMetrics(
+            currentCadence: metrics.currentCadence ?? previous?.currentCadence,
+            heartRate: metrics.heartRate ?? previous?.heartRate,
+            distance: metrics.distance ?? previous?.distance,
+            averageCadence: metrics.averageCadence ?? previous?.averageCadence,
+            receivedAt: metrics.receivedAt
+        )
     }
 
     private func handleConnectionChange(_ state: WatchConnectionState) {
@@ -588,6 +733,25 @@ private struct ConnectionBadge: View {
     }
 }
 
+private struct CompactConnectionStatus: View {
+    let state: WatchConnectionState
+
+    private var color: Color {
+        state == .connected ? .green : (state == .waitingForReachability ? .orange : .secondary)
+    }
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Circle().fill(color).frame(width: 7, height: 7)
+            Text(state == .connected ? "Watch接続中" : "Watch \(state.label)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
 /// カードの背景。
 private struct CardBackground: View {
     var body: some View {
@@ -638,27 +802,37 @@ private struct CadenceStepper: View {
     @ObservedObject var store: SessionStore
 
     var body: some View {
-        VStack(spacing: 4) {
-            HStack(spacing: 12) {
+        VStack(spacing: 8) {
+            HStack(spacing: 22) {
                 Button { store.adjustTargetCadence(by: -5) } label: {
-                    Image(systemName: "minus.circle.fill")
-                        .font(.title2)
+                    Image(systemName: "minus")
+                        .font(.title2.bold())
+                        .foregroundStyle(.primary)
+                        .frame(width: 58, height: 58)
+                        .background(Circle().fill(Color.secondary.opacity(0.13)))
                 }
+                .buttonStyle(.plain)
+                .disabled(store.targetCadence <= store.cadenceRange.lowerBound)
                 .opacity(store.targetCadence <= store.cadenceRange.lowerBound ? 0.45 : 1)
 
                 Text("\(store.targetCadence) 歩/分")
                     .font(.title3.bold().monospacedDigit())
                     .contentTransition(.numericText())
-                    .frame(minWidth: 112)
+                    .frame(minWidth: 122)
                     .multilineTextAlignment(.center)
 
                 Button { store.adjustTargetCadence(by: 5) } label: {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.title2)
+                    Image(systemName: "plus")
+                        .font(.title2.bold())
+                        .foregroundStyle(.primary)
+                        .frame(width: 58, height: 58)
+                        .background(Circle().fill(Color.secondary.opacity(0.13)))
                 }
+                .buttonStyle(.plain)
+                .disabled(store.targetCadence >= store.cadenceRange.upperBound)
                 .opacity(store.targetCadence >= store.cadenceRange.upperBound ? 0.45 : 1)
             }
-            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity)
 
             Text("目標を調整（5 歩/分刻み）")
                 .font(.caption)
@@ -677,11 +851,13 @@ private struct HomeView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
-                Text("RUNWAVE")
-                    .font(.system(size: 40, weight: .heavy, design: .rounded))
-                    .padding(.top, 24)
-
-                ConnectionBadge(state: store.connectionState)
+                HStack(alignment: .firstTextBaseline) {
+                    Text("RUNWAVE")
+                        .font(.system(size: 36, weight: .heavy, design: .rounded))
+                    Spacer()
+                    CompactConnectionStatus(state: store.connectionState)
+                }
+                .padding(.top, 24)
 
                 goalCard
 
@@ -955,6 +1131,191 @@ private struct SettingsView: View {
     }
 }
 
+private struct RecordsView: View {
+    @ObservedObject var store: SessionStore
+    @State private var showClearConfirmation = false
+    @State private var editMode: EditMode = .inactive
+    @State private var selectedRecordIDs = Set<UUID>()
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if store.workoutRecords.isEmpty {
+                    ContentUnavailableView(
+                        "記録はまだありません",
+                        systemImage: "figure.run",
+                        description: Text("ワークアウトを終了すると、ここに記録されます。")
+                    )
+                } else {
+                    List(selection: $selectedRecordIDs) {
+                        ForEach(store.workoutRecords) { record in
+                            NavigationLink {
+                                WorkoutRecordDetailView(record: record)
+                            } label: {
+                                recordRow(record)
+                            }
+                                .swipeActions {
+                                    Button(role: .destructive) {
+                                        store.deleteWorkoutRecord(record.id)
+                                    } label: {
+                                        Label("削除", systemImage: "trash")
+                                    }
+                                }
+                        }
+                    }
+                    .listStyle(.insetGrouped)
+                    .environment(\.editMode, $editMode)
+                }
+            }
+            .navigationTitle("記録")
+            .toolbar {
+                if !store.workoutRecords.isEmpty {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button(editMode.isEditing ? "完了" : "編集") {
+                            withAnimation {
+                                editMode = editMode.isEditing ? .inactive : .active
+                                if !editMode.isEditing { selectedRecordIDs.removeAll() }
+                            }
+                        }
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        if editMode.isEditing {
+                            Button("削除 (\(selectedRecordIDs.count))", role: .destructive) {
+                                store.deleteWorkoutRecords(selectedRecordIDs)
+                                selectedRecordIDs.removeAll()
+                                editMode = .inactive
+                            }
+                            .disabled(selectedRecordIDs.isEmpty)
+                        } else {
+                            Button("すべて削除", role: .destructive) {
+                                showClearConfirmation = true
+                            }
+                        }
+                    }
+                }
+            }
+            .confirmationDialog("すべての記録を削除しますか？", isPresented: $showClearConfirmation, titleVisibility: .visible) {
+                Button("すべて削除", role: .destructive) { store.clearWorkoutRecords() }
+                Button("キャンセル", role: .cancel) {}
+            }
+        }
+    }
+
+    private func recordRow(_ record: WorkoutRecord) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label(record.activityMode.label, systemImage: record.activityMode.icon)
+                    .font(.headline)
+                if record.isDemo { DemoBadge() }
+                Spacer()
+                Text(record.date.formatted(date: .abbreviated, time: .shortened))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            HStack(spacing: 14) {
+                Label(formatElapsed(record.elapsed), systemImage: "clock")
+                Label(formatDistance(record.distance), systemImage: "figure.run")
+                if let cadence = record.averageCadence, cadence > 0 {
+                    Label("\(cadence)歩/分", systemImage: "metronome")
+                }
+            }
+            .font(.subheadline.monospacedDigit())
+            .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 5)
+    }
+}
+
+private struct WorkoutRecordDetailView: View {
+    let record: WorkoutRecord
+
+    private var routeCoordinates: [CLLocationCoordinate2D] { record.route.map(\.coordinate) }
+    private var averageSpeedKPH: Double? {
+        guard let distance = record.distance, record.elapsed > 0 else { return nil }
+        return distance / record.elapsed * 3.6
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(spacing: 8) {
+                    Label(record.activityMode.label, systemImage: record.activityMode.icon)
+                        .font(.headline)
+                    if record.isDemo { DemoBadge() }
+                    Spacer()
+                }
+                Text(record.date.formatted(date: .long, time: .shortened))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                if routeCoordinates.count > 1 {
+                    WorkoutRouteMap(route: routeCoordinates, goal: nil)
+                        .frame(height: 260)
+                } else {
+                    ContentUnavailableView(
+                        "経路データがありません",
+                        systemImage: "map",
+                        description: Text("位置情報が取得できたワークアウトでは、ここに走行経路が表示されます。")
+                    )
+                    .frame(height: 220)
+                }
+
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                    metric("距離", formatDistance(record.distance), icon: "figure.run")
+                    metric("時間", formatElapsed(record.elapsed), icon: "clock")
+                    metric("平均速度", averageSpeedKPH.map { String(format: "%.1f km/h", $0) } ?? "未計測", icon: "speedometer")
+                    metric("停止回数", "\(record.stopCount)回", icon: "pause.circle")
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("速度の推移").font(.headline)
+                    if record.speedSamples.count > 1 {
+                        Chart(record.speedSamples) { sample in
+                            AreaMark(
+                                x: .value("経過時間", sample.elapsed),
+                                y: .value("速度", sample.speedKPH)
+                            )
+                            .foregroundStyle(.blue.opacity(0.12))
+                            LineMark(
+                                x: .value("経過時間", sample.elapsed),
+                                y: .value("速度", sample.speedKPH)
+                            )
+                            .foregroundStyle(.blue)
+                            .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                        }
+                        .chartYAxisLabel("km/h")
+                        .chartXAxisLabel("経過時間")
+                        .frame(height: 210)
+                    } else {
+                        Text("速度データはまだありません。次回のワークアウトから記録します。")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, minHeight: 100, alignment: .leading)
+                    }
+                    Text("停止回数は、GPS速度が0.5 m/s以下で3秒以上続いた回数です。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(16)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            }
+            .padding(16)
+        }
+        .navigationTitle("記録の詳細")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func metric(_ title: String, _ value: String, icon: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(title, systemImage: icon).font(.caption).foregroundStyle(.secondary)
+            Text(value).font(.title3.bold().monospacedDigit()).lineLimit(1).minimumScaleFactor(0.75)
+        }
+        .frame(maxWidth: .infinity, minHeight: 78, alignment: .leading)
+        .padding(14)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+}
+
 private struct FirstStrideSetupView: View {
     @ObservedObject var store: SessionStore
     @ObservedObject var calibration: StrideCalibrationManager
@@ -984,7 +1345,13 @@ private struct FirstStrideSetupView: View {
 
 private struct SessionView: View {
     @ObservedObject var store: SessionStore
+    @ObservedObject var routeTracker: WorkoutRouteTracker
     @State private var showEndConfirm = false
+
+    init(store: SessionStore) {
+        self.store = store
+        self.routeTracker = store.routeTracker
+    }
 
     var body: some View {
         ScrollView {
@@ -1006,19 +1373,40 @@ private struct SessionView: View {
                     Text("目標ケイデンス")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text("\(store.targetCadence)")
-                            .font(.system(size: 52, weight: .bold, design: .rounded))
-                            .monospacedDigit()
-                        Text("歩/分")
-                            .font(.headline)
-                            .foregroundColor(.secondary)
+                    HStack(alignment: .center) {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text("\(store.targetCadence)")
+                                .font(.system(size: 52, weight: .bold, design: .rounded))
+                                .monospacedDigit()
+                            Text("歩/分")
+                                .font(.headline)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer(minLength: 8)
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text("現在")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(store.latestMetrics?.currentCadence.map(String.init) ?? "--")
+                                .font(.system(size: 28, weight: .semibold, design: .rounded))
+                                .monospacedDigit()
+                                .foregroundStyle(.cyan)
+                            Text("歩/分")
+                                .font(.caption2)
+                                .foregroundStyle(.cyan)
+                        }
                     }
                     CadenceStepper(store: store)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(16)
                 .background(CardBackground())
+
+                // 心拍数はWatchのHealthKitワークアウトで取得する。
+                MetricCard(
+                    title: "心拍数",
+                    display: store.metricDisplay(store.latestMetrics?.heartRate, unit: "拍/分")
+                )
 
                 // 信号のイラスト（受け取った値を描くだけ）
                 VStack(alignment: .leading, spacing: 12) {
@@ -1041,6 +1429,23 @@ private struct SessionView: View {
                 .padding(16)
                 .background(CardBackground())
 
+                WorkoutRouteMap(route: routeTracker.route, goal: store.goal)
+                    .frame(height: 210)
+                HStack {
+                    Label("距離", systemImage: "figure.run")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(formatDistance(store.latestMetrics?.distance))
+                        .font(.headline.monospacedDigit())
+                }
+                .padding(.horizontal, 4)
+                if let message = routeTracker.statusMessage {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
                 // 必須の終了地点の設定状況
                 HStack(spacing: 8) {
                     Image(systemName: "mappin.and.ellipse")
@@ -1052,18 +1457,6 @@ private struct SessionView: View {
                 }
                 .padding(.horizontal, 4)
                 .accessibilityElement(children: .combine)
-
-                // 現在ケイデンス
-                MetricCard(
-                    title: "現在ケイデンス",
-                    display: store.metricDisplay(store.latestMetrics?.currentCadence, unit: "歩/分")
-                )
-
-                // 心拍数（ケイデンスとは別の値）
-                MetricCard(
-                    title: "心拍数",
-                    display: store.metricDisplay(store.latestMetrics?.heartRate, unit: "拍/分")
-                )
 
                 // ワークアウト状態・経過時間
                 HStack(alignment: .center) {
@@ -1277,6 +1670,8 @@ struct ContentView: View {
                     TabView {
                         HomeView(store: store, calibration: calibration)
                             .tabItem { Label("メイン", systemImage: "figure.run") }
+                        RecordsView(store: store)
+                            .tabItem { Label("記録", systemImage: "clock.arrow.circlepath") }
                         SettingsView(store: store, calibration: calibration)
                             .tabItem { Label("設定", systemImage: "slider.horizontal.3") }
                     }

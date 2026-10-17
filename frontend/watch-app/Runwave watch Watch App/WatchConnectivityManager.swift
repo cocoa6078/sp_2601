@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import HealthKit
 import WatchConnectivity
 
 /// iPhone から届く目標値とセッション操作を Watch アプリに反映する。
@@ -16,6 +17,7 @@ final class WatchConnectivityManager: NSObject, ObservableObject, WCSessionDeleg
     @Published private(set) var activityMode = "running"
     @Published private(set) var workoutDistance: Double?
     @Published private(set) var workoutAverageCadence: Int?
+    @Published private(set) var heartRate: Int?
     @Published private(set) var isReachable = false
     @Published private(set) var sessionStatus = "iPhone未接続"
     @Published private(set) var outputSettings = TempoOutputSettings.load()
@@ -24,8 +26,10 @@ final class WatchConnectivityManager: NSObject, ObservableObject, WCSessionDeleg
     private let session: WCSession
     private var outputRevision = UserDefaults.standard.double(forKey: "runwave.receivedOutputRevision")
     private var lastTargetIssuedAt = UserDefaults.standard.double(forKey: "runwave.receivedTargetIssuedAt")
+    @Published private(set) var crownSyncStatus = ""
     private var accumulatedWorkoutTime: TimeInterval = 0
     private var workoutStartedAt: Date?
+    private let heartRateWorkout = WatchHeartRateWorkout()
 
     override convenience init() {
         self.init(session: .default)
@@ -37,6 +41,14 @@ final class WatchConnectivityManager: NSObject, ObservableObject, WCSessionDeleg
         guard WCSession.isSupported() else { return }
         session.delegate = self
         session.activate()
+        heartRateWorkout.onHeartRate = { [weak self] value in
+            guard let self else { return }
+            self.heartRate = value
+            self.sendHeartRate(value)
+        }
+        heartRateWorkout.onError = { [weak self] message in
+            self?.crownSyncStatus = message
+        }
     }
 
     private func receive(_ payload: [String: Any]) {
@@ -85,18 +97,25 @@ final class WatchConnectivityManager: NSObject, ObservableObject, WCSessionDeleg
                 self.workoutStartedAt = Date()
                 self.workoutDistance = nil
                 self.workoutAverageCadence = nil
+                self.heartRate = nil
                 self.sessionStatus = "セッション実行中"
                 self.sessionState = .running
+                Task { @MainActor in
+                    await self.heartRateWorkout.start(activityMode: payload["activityMode"] as? String ?? "running")
+                }
             case "workoutPause":
                 self.freezeWorkoutClock()
                 self.sessionStatus = "一時停止中"
                 self.sessionState = .paused
+                self.heartRateWorkout.pause()
             case "workoutResume":
                 self.workoutStartedAt = Date()
                 self.sessionStatus = "セッション実行中"
                 self.sessionState = .running
+                self.heartRateWorkout.resume()
             case "workoutEnd":
                 self.freezeWorkoutClock()
+                self.heartRateWorkout.stop()
                 if let elapsed = payload["elapsed"] as? Double { self.accumulatedWorkoutTime = elapsed }
                 self.workoutDistance = payload["distance"] as? Double
                 self.workoutAverageCadence = payload["averageCadence"] as? Int
@@ -114,22 +133,20 @@ final class WatchConnectivityManager: NSObject, ObservableObject, WCSessionDeleg
         return min(max(value, lowerBound), upperBound)
     }
 
-    func adjustTargetCadence(by delta: Int) {
-        let lowerBound = activityMode == "walking" ? 80 : 110
-        let upperBound = activityMode == "walking" ? 140 : 190
-        let nextAdjustment = cadenceAdjustment + delta
-        let updated = min(max(cadenceBaseline + nextAdjustment, lowerBound), upperBound)
+    func setTargetCadenceFromCrown(_ value: Int) {
+        let updated = Self.normalizedCadence(value, mode: activityMode)
         guard updated != targetCadence else { return }
-        let guidanceOffset = guidedCadence - targetCadence
-        guidedCadence = min(max(updated + guidanceOffset, lowerBound), upperBound)
+        // Signal-based cadence changes are still deferred, so don't carry a
+        // stale guidance offset forward while the user adjusts the base goal.
+        guidedCadence = updated
         targetCadence = updated
-        // Store the applied offset, not an unclamped value, or further crown
-        // adjustments can drift past the activity's lower/upper limits.
         cadenceAdjustment = updated - cadenceBaseline
-        sendToPhone([
-            "type": "targetAdjust",
-            "delta": delta
-        ])
+        let payload: [String: Any] = [
+            "type": "targetSet",
+            "targetCadence": updated,
+            "crownIssuedAt": Date().timeIntervalSince1970
+        ]
+        sendCrownUpdate(payload)
     }
 
     func elapsed(at now: Date) -> TimeInterval {
@@ -186,6 +203,22 @@ final class WatchConnectivityManager: NSObject, ObservableObject, WCSessionDeleg
 
     private func sendToPhone(_ payload: [String: Any]) {
         guard session.activationState == .activated else { return }
+
+        // Crown changes represent the latest target state, not an event that
+        // must be replayed one step at a time. Keep the newest value queued in
+        // both directions so a temporarily unreachable iPhone catches up.
+        if payload["type"] as? String == "targetSet" {
+            do {
+                try session.updateApplicationContext(payload)
+            } catch {
+                // A live message can still deliver the value while reachable.
+            }
+            if session.isReachable {
+                session.sendMessage(payload, replyHandler: nil, errorHandler: nil)
+            }
+            return
+        }
+
         if session.isReachable {
             session.sendMessage(payload, replyHandler: nil) { [weak self] _ in
                 self?.session.transferUserInfo(payload)
@@ -193,6 +226,49 @@ final class WatchConnectivityManager: NSObject, ObservableObject, WCSessionDeleg
         } else {
             session.transferUserInfo(payload)
         }
+    }
+
+    private func sendHeartRate(_ value: Int) {
+        guard session.activationState == .activated else { return }
+        let payload: [String: Any] = [
+            "type": "metrics",
+            "heartRate": value,
+            "receivedAt": Date().timeIntervalSince1970
+        ]
+        if session.isReachable {
+            session.sendMessage(payload, replyHandler: nil) { [weak self] _ in
+                self?.session.transferUserInfo(payload)
+            }
+        } else {
+            session.transferUserInfo(payload)
+        }
+    }
+
+    private func sendCrownUpdate(_ payload: [String: Any]) {
+        guard session.activationState == .activated else {
+            crownSyncStatus = "iPhone未送信"
+            return
+        }
+        do { try session.updateApplicationContext(payload) } catch { }
+        guard session.isReachable else {
+            session.transferUserInfo(payload)
+            crownSyncStatus = "iPhoneへ送信待ち"
+            return
+        }
+        session.sendMessage(payload, replyHandler: { [weak self] response in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if response["type"] as? String == "targetSetAck",
+                   response["targetCadence"] as? Int == payload["targetCadence"] as? Int {
+                    self.crownSyncStatus = "iPhone同期済み"
+                } else {
+                    self.crownSyncStatus = "iPhone応答不一致"
+                }
+            }
+        }, errorHandler: { [weak self] _ in
+            self?.session.transferUserInfo(payload)
+            DispatchQueue.main.async { self?.crownSyncStatus = "iPhoneへ再送待ち" }
+        })
     }
 
     private func updateReachability() {

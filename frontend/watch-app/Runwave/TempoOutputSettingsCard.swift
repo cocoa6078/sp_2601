@@ -9,18 +9,30 @@ struct TempoOutputSettingsCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Label("Watchのテンポ案内", systemImage: "applewatch")
+            Label("テンポ案内の出力", systemImage: "metronome")
                 .font(.headline)
 
-            Picker("案内方法", selection: Binding(
-                get: { store.outputSettings.mode },
-                set: { store.setOutputMode($0) }
-            )) {
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
                 ForEach(TempoOutputMode.allCases) { mode in
-                    Text(mode.label).tag(mode)
+                    Button {
+                        store.setOutputMode(mode)
+                    } label: {
+                        Label(mode.label, systemImage: icon(for: mode))
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity, minHeight: 42)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(store.outputSettings.mode == mode ? Color.green.opacity(0.18) : Color.secondary.opacity(0.1))
+                            )
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .stroke(store.outputSettings.mode == mode ? Color.green : Color.clear, lineWidth: 1.5)
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(store.outputSettings.mode == mode ? .isSelected : [])
                 }
             }
-            .pickerStyle(.segmented)
 
             if store.outputSettings.mode == .haptic {
                 Text("振動の感じ方")
@@ -39,7 +51,7 @@ struct TempoOutputSettingsCard: View {
                     .foregroundStyle(.secondary)
             }
 
-            if store.outputSettings.mode == .audio {
+            if store.outputSettings.mode == .audio || store.outputSettings.mode == .iphoneAudio {
                 HStack {
                     Text("ビープ音の音量")
                     Spacer()
@@ -51,40 +63,54 @@ struct TempoOutputSettingsCard: View {
                     get: { store.outputSettings.volume },
                     set: { store.setAudioVolume($0) }
                 ), in: 0...1, step: 0.05) {
-                    Text("Watchのビープ音量")
+                    Text("ビープ音の音量")
                 } minimumValueLabel: {
                     Image(systemName: "speaker.fill")
                 } maximumValueLabel: {
                     Image(systemName: "speaker.wave.3.fill")
                 }
                 .accessibilityValue("\(Int((store.outputSettings.volume * 100).rounded()))パーセント")
-                Text("Watchから目標テンポに合わせて「ピッ」と鳴らします。実際の音量はWatch本体の音量にも影響されます。")
+                    Text(store.outputSettings.mode == .iphoneAudio
+                         ? "iPhoneまたは接続中のイヤホンから鳴らします。ほかの音楽を止めずに重ねて再生します。"
+                         : "Watchから目標テンポに合わせて「ピッ」と鳴らします。実際の音量はWatch本体の音量にも影響されます。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            Text(store.outputSyncMessage)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .accessibilityIdentifier("outputSettingsSyncStatus")
+            if store.outputSettings.mode != .iphoneAudio {
+                Text(store.outputSyncMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("outputSettingsSyncStatus")
+            }
 
             Button {
                 store.previewOutput()
             } label: {
-                Label("Watchで3拍試す", systemImage: "play.circle")
+                Label(store.outputSettings.mode == .iphoneAudio ? "iPhoneで3拍試す" : "Watchで3拍試す", systemImage: "play.circle")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.bordered)
-            .disabled(store.connectionState != .connected || store.outputSettings.mode == .off || sessionIsActive)
+            .disabled(store.outputSettings.mode == .off || sessionIsActive ||
+                      (store.outputSettings.mode != .iphoneAudio && store.connectionState != .connected))
 
             Text(sessionIsActive
                  ? "セッション中も設定の変更をすぐに反映します。"
-                 : "WatchのRUNWAVEを開いたままお試しください。")
+                 : (store.outputSettings.mode == .iphoneAudio ? "音楽を再生中でもテンポ音を重ねて鳴らします。" : "WatchのRUNWAVEを開いたままお試しください。"))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
         .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.secondary.opacity(0.12)))
+    }
+
+    private func icon(for mode: TempoOutputMode) -> String {
+        switch mode {
+        case .haptic: "waveform.path"
+        case .audio: "applewatch"
+        case .iphoneAudio: "iphone"
+        case .off: "speaker.slash"
+        }
     }
 }

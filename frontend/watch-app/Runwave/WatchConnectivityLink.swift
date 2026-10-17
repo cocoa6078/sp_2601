@@ -9,12 +9,16 @@ final class WatchConnectivityLink: NSObject, WatchLink, WCSessionDelegate {
     var onConnectionChange: ((WatchConnectionState) -> Void)?
     var onGoalSetupRequested: ((String?) -> Void)?
     var onWorkoutControl: ((String) -> Void)?
-    var onTargetCadenceAdjustment: ((Int) -> Void)?
+    var onTargetCadenceChange: ((Int) -> Void)?
     var onOutputSettingsApplied: ((TempoOutputSettings) -> Void)?
     var onOutputError: ((String) -> Void)?
     private var outputSettings = TempoOutputSettings.load()
     private var outputRevision = UserDefaults.standard.double(forKey: "runwave.outputRevision")
     private var pendingPayloads: [[String: Any]] = []
+    private var lastCrownSessionStartedAt = UserDefaults.standard.double(forKey: "runwave.lastCrownSessionStartedAt")
+    private var lastCrownSessionID = UserDefaults.standard.string(forKey: "runwave.lastCrownSessionID") ?? ""
+    private var lastCrownSequence = UserDefaults.standard.integer(forKey: "runwave.lastCrownSequence")
+    private var lastCrownIssuedAt = UserDefaults.standard.double(forKey: "runwave.lastCrownIssuedAt")
 
     private enum Key {
         static let type = "type"
@@ -50,7 +54,9 @@ final class WatchConnectivityLink: NSObject, WatchLink, WCSessionDelegate {
         ])
     }
 
-    func workoutDidStart(sessionID: UUID) { send([Key.type: "workoutStart", Key.sessionID: sessionID.uuidString]) }
+    func workoutDidStart(sessionID: UUID, activityMode: ActivityMode) {
+        send([Key.type: "workoutStart", Key.sessionID: sessionID.uuidString, "activityMode": activityMode.rawValue])
+    }
     func workoutDidPause() { send([Key.type: "workoutPause"]) }
     func workoutDidResume() { send([Key.type: "workoutResume"]) }
     func workoutDidEnd(elapsed: TimeInterval, distance: Double?, averageCadence: Int?, activityMode: ActivityMode) {
@@ -167,9 +173,16 @@ final class WatchConnectivityLink: NSObject, WatchLink, WCSessionDelegate {
             DispatchQueue.main.async { [weak self] in self?.onWorkoutControl?("end") }
             return
         }
-        if message[Key.type] as? String == "targetAdjust",
-           let delta = message["delta"] as? Int {
-            DispatchQueue.main.async { [weak self] in self?.onTargetCadenceAdjustment?(delta) }
+        if message[Key.type] as? String == "targetSet",
+           let cadence = message[Key.target] as? Int,
+           let issuedAt = message["crownIssuedAt"] as? Double {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                guard issuedAt > self.lastCrownIssuedAt else { return }
+                self.lastCrownIssuedAt = issuedAt
+                UserDefaults.standard.set(issuedAt, forKey: "runwave.lastCrownIssuedAt")
+                self.onTargetCadenceChange?(cadence)
+            }
             return
         }
         if message[Key.type] as? String == "outputSettingsApplied",
@@ -209,6 +222,14 @@ final class WatchConnectivityLink: NSObject, WatchLink, WCSessionDelegate {
         refreshConnectionState()
     }
     func session(_ session: WCSession, didReceiveMessage message: [String: Any]) { receive(message) }
+    func session(_ session: WCSession, didReceiveMessage message: [String: Any], replyHandler: @escaping ([String: Any]) -> Void) {
+        receive(message)
+        if message[Key.type] as? String == "targetSet" {
+            replyHandler(["type": "targetSetAck", Key.target: message[Key.target] ?? 0])
+        } else {
+            replyHandler(["type": "ack"])
+        }
+    }
     func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any]) { receive(userInfo) }
     func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) { receive(applicationContext) }
 
