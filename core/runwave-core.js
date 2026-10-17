@@ -244,12 +244,15 @@ function walkPlanAt(config, ctl, fromX, fromT, kmh) {
   return w ? { kmh, arriveT, window: w } : null;
 }
 // 使える早歩きの速さのうち、窓の中央に最も近く着くもの（ずれに強い）。同じくらいなら速いほう
-function bestWalkAt(config, ctl, fromX, fromT) {
+// win（着いてよい時間帯の指定）があれば、まずその時間帯に近いもの（中なら0）を選ぶ。早歩きの速さは刻みがあるので、
+// 狭い時間帯にぴったり入れないときも、近いものを選んで1秒ごとに寄せていく
+function bestWalkAt(config, ctl, fromX, fromT, win = null) {
   let best = null;
   for (const kmh of walkSpeedsOf(ctl.walk)) {
     const p = walkPlanAt(config, ctl, fromX, fromT, kmh);
     if (!p) continue;
-    const off = Math.abs(p.arriveT - (p.window.startT + p.window.endT) / 2);
+    const toWin = win ? Math.max(0, win.startT - p.arriveT, p.arriveT - win.endT) : 0;
+    const off = toWin * 1e3 + Math.abs(p.arriveT - (p.window.startT + p.window.endT) / 2);
     if (!best || off < best.off - 1e-6 || (Math.abs(off - best.off) <= 1e-6 && kmh > best.kmh)) best = { ...p, off };
   }
   return best;
@@ -269,7 +272,19 @@ function runFor(state, config, c, ctl, n) {
   return { crossed: false, x, t: tick / TPS };
 }
 
+// route.arriveWindow（任意・{ startT, endT }）：着いてよい時間帯をさらに絞る（複数信号の先読みで使う）。
+// その中で計画が立たなければ、絞らない場合の選び方に戻る。無ければ従来と同じ
 export function chooseTarget(state, config) {
+  const win = config.route?.arriveWindow;
+  if (win) {
+    const d = chooseTargetIn(state, config, win);
+    if (d.reason !== 'unavoidable' && d.reason !== 'noMargin') return d;
+  }
+  return chooseTargetIn(state, config, null);
+}
+
+function chooseTargetIn(state, config, win) {
+  const inWin = (t) => !win || (t >= win.startT && t < win.endT);
   const ctl = controlOf(config);
   const base = config.runner.baseBpm;
   const modeFor = (target) => (target === base && state.bpm === base ? 'normal' : 'adjusting');
@@ -281,8 +296,17 @@ export function chooseTarget(state, config) {
 
   const { signal } = config;
   const now = state.tick / TPS;
+  // 時間帯の指定があっても、早歩きの速さの範囲で届かないなら従来の選び方に戻す（呼び出し元の chooseTarget が戻す）
+  const walkReach = (fromX, fromT) => {
+    const d = config.route.crossingX - fromX;
+    return { lo: fromT + walkTimeOf(d, ctl.walk.maxKmh), hi: fromT + walkTimeOf(d, ctl.walk.minKmh) };
+  };
   if (ctl.walk.enabled && state.gait === 'walk') {
-    const w = bestWalkAt(config, ctl, state.x, now);
+    if (win) {
+      const r = walkReach(state.x, now);
+      if (r.lo >= win.endT || r.hi < win.startT) return { targetBpm: state.bpm, mode: 'stopRecommended', reason: 'unavoidable', targetSpeedKmh: state.targetSpeedKmh };
+    }
+    const w = bestWalkAt(config, ctl, state.x, now, win);
     if (w) return { targetBpm: walkBpmOf(config, w.kmh), mode: 'walking', reason: 'walkBridge', targetSpeedKmh: w.kmh };
     // 早歩きでも間に合わなくなった：今の速さのまま歩き、非青なら横断地点で止まる
     return { targetBpm: state.bpm, mode: 'stopRecommended', reason: 'unavoidable', targetSpeedKmh: state.targetSpeedKmh };
@@ -291,7 +315,7 @@ export function chooseTarget(state, config) {
   const windowsUntil = (untilT, crossTimeS) => safeGreenWindows(signal, now, untilT, { ...ctl, crossTimeS });
   const feasible = (c) => {
     const p = predictArrival(state, config, c, ctl);
-    if (!p) return false;
+    if (!p || !inWin(p.arriveT)) return false;
     // 窓の端ちょうどの到着は、信号判定（誤差を安全側に倒す）で非青になりうるので、ごくわずかな余白を取る。
     // 毎秒選び直すと到着が窓の端に寄るため、余裕0の設定で必要になる
     return windowsUntil(p.arriveT, crossTimeOf(config, p.bpm))
@@ -321,16 +345,23 @@ export function chooseTarget(state, config) {
   // 余裕付きの計画は無い。通常BPMで青に着けるなら通常どおり（余裕なし）、着けなければ停止推奨
   // 停止推奨: 通常BPMへ段階的に戻しながら横断地点まで進み、非青ならそこで止まる
   const pBase = predictArrival(state, config, base, ctl);
-  if (pBase && canEnter(signal, pBase.arriveT, crossTimeOf(config, pBase.bpm))) {
+  // 時間帯の指定があるときは、余裕なしで通るより、指定の時間帯に早歩きで着くほうを先に調べる
+  if (!win && pBase && canEnter(signal, pBase.arriveT, crossTimeOf(config, pBase.bpm))) {
     return { targetBpm: base, mode: modeFor(base), reason: 'noMargin' };
   }
   // 早歩きでつなぐ。走りを優先し、歩く距離を短くするため、
   // 「あと1回分（目標の再計算間隔）走ってからでも早歩きで間に合う」うちは走りの下限へ向けて走り続け、間に合わなくなる直前に切り替える
-  if (ctl.walk.enabled) {
-    const nowWalk = bestWalkAt(config, ctl, state.x, now);
+  // 時間帯の指定があるときは、走ってから歩く組み合わせで届くか（走りの下限で走り続けた到着〜今から最も遅く歩いた到着）
+  const walkUseful = !win || (pSlow && pSlow.arriveT < win.endT && walkReach(state.x, now).hi >= win.startT);
+  if (ctl.walk.enabled && walkUseful) {
+    const nowWalk = bestWalkAt(config, ctl, state.x, now, win);
     if (nowWalk) {
       const after = runFor(state, config, ctl.baseLow, ctl, ctl.targetTicks);
-      if (!after.crossed && bestWalkAt(config, ctl, after.x, after.t)) {
+      const later = after.crossed ? null : bestWalkAt(config, ctl, after.x, after.t, win);
+      // 時間帯の指定があるときは、あと1回分走ってからでも、最も遅い早歩きで時間帯の中央以降に着けるかで判断する
+      // （走るほど早く着く。走りすぎて時間帯より早く着くことになる前に切り替える。端ではなく中央を狙う）
+      const reachLater = () => after.t + walkTimeOf(config.route.crossingX - after.x, ctl.walk.minKmh) >= (win.startT + win.endT) / 2;
+      if (later && (win ? reachLater() : true)) {
         return { targetBpm: ctl.baseLow, mode: 'adjusting', reason: 'walkBridge' };
       }
       return { targetBpm: walkBpmOf(config, nowWalk.kmh), mode: 'walking', reason: 'walkBridge', targetSpeedKmh: nowWalk.kmh };
