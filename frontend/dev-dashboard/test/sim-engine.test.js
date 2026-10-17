@@ -58,7 +58,7 @@ test('3 シナリオ（A / B / B-length）と DEMO.sub: 逐次 step の最終結
   }
 });
 
-test('各シナリオの性質（A=減速で回避して遅い / B=加速で回避して早い / B-length=回避できない）', () => {
+test('各シナリオの性質（A=減速で回避して遅い / B=加速で回避して早い / B-length=早歩きで回避して少し遅い）', () => {
   const a = expectedFor('A');
   assert.equal(a.normal.stops, 1);
   assert.equal(a.runwave.stops, 0);
@@ -71,7 +71,9 @@ test('各シナリオの性質（A=減速で回避して遅い / B=加速で回�
 
   const bl = expectedFor('B-length');
   assert.equal(bl.normal.stops, 1);
-  assert.equal(bl.runwave.stops, 1, 'length モデルでは回避できない');
+  // 変更前（走りのみ）: 停止 1 回・総時間 360 秒 → 変更後（早歩き既定有効）: 停止 0 回・総時間 366.77 秒（早歩きでつなぐ）
+  assert.equal(bl.runwave.stops, 0, 'length モデルでも早歩きでつないで回避できる');
+  assert.equal(bl.runwave.walkCount, 1);
   assert.equal(cfg('B-length').control.crossingModel, 'length');
   assert.equal(cfg('B-length').signal.crossingM, 20);
   assert.equal(cfg('A').signal.phaseS, 20);
@@ -210,9 +212,9 @@ test('結果の読み方: 停止回避と所要時間の差を別々に示し、
   assert.equal(b.avoided, true);
   assert.match(b.timeLine, /短縮/);
   const bl = describeResult(expectedFor('B-length'));
-  assert.equal(bl.avoided, false);
-  assert.match(bl.stopLine, /停止回避なし/);
-  assert.match(bl.timeLine, /差なし/);
+  assert.equal(bl.avoided, true);  // 変更前: false
+  assert.match(bl.stopLine, /停止回避/);
+  assert.match(bl.timeLine, /[+]6[.]8 秒・遅い/);  // 変更前: 差なし
   const pending = describeResult(pairSummary(createPair(cfg('B'))));
   assert.equal(pending.avoided, null);
 });

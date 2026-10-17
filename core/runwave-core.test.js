@@ -18,13 +18,14 @@ function trace(config) {
 const withPhase = (config, phaseS) => ({ ...config, signal: { ...config.signal, phaseS } });
 const withEnabled = (config, enabled) => ({ ...config, control: { ...config.control, enabled } });
 const withControl = (config, control) => ({ ...config, control: { ...config.control, ...control } });
+const noWalk = (config) => withControl(config, { walk: { enabled: false } });  // 走りのみ（v0.3 以前と同じ）を明示する
 
 // 性質テストに使う条件の組み合わせ（位相・横断モデル・制御ON/OFF）
 const sweep = [];
 for (let phaseS = 0; phaseS < 120; phaseS += 7)
   for (const model of ['point', 'length'])
     for (const enabled of [false, true])
-      sweep.push(withEnabled(withModel(withPhase(SCENARIOS.A, phaseS), model), enabled));
+      sweep.push(withEnabled(withModel(withPhase(noWalk(SCENARIOS.A), phaseS), model), enabled));
 
 // ---------- 手計算との一致（v4 6章） ----------
 test('calibrate: 160m/200歩/80秒 → 0.8m・150BPM・2m/s', () => {
@@ -262,7 +263,7 @@ test('遠い横断地点でも RUNWAVE の停止が増えない（全位相）',
 });
 
 test('「停止推奨」は本当に止まるときだけ。余裕は無いが青に着くときは reason=noMargin', () => {
-  const cfg = { ...SCENARIOS.A, signal: { ...SIG, phaseS: 0 }, route: { crossingX: 1, goalX: 10 } };
+  const cfg = noWalk({ ...SCENARIOS.A, signal: { ...SIG, phaseS: 0 }, route: { crossingX: 1, goalX: 10 } });
   const d = chooseTarget(createRun(cfg), cfg);
   assert.equal(d.reason, 'noMargin');
   assert.notEqual(d.mode, 'stopRecommended');
@@ -305,7 +306,7 @@ test('リズムの指標：通常走行はずれ0、RUNWAVE は止まらずに�
 
 test('リズムの指標はゴールの瞬間までだけ数える', () => {
   // B のゴールを 400.01m にすると、最後のステップの途中（161BPM 走行中）でゴールする
-  const cfg = { ...SCENARIOS.B, route: { crossingX: 400, goalX: 400.01 } };
+  const cfg = noWalk({ ...SCENARIOS.B, route: { crossingX: 400, goalX: 400.01 } });
   const tr = trace(cfg);
   const last = tr.at(-1);
   // 各ステップの実際の走行時間（最後だけはゴールの瞬間まで）× そのステップの BPM のずれ
@@ -323,7 +324,7 @@ test('リズムの指標はゴールの瞬間までだけ数える', () => {
 
 test('余裕0でも、計画どおりに着けるなら止まらない（窓の端ぎりぎりの到着を避ける）', () => {
   // 余裕0では、届く範囲に青があるのに止まる位相が出ていた（v0.3.0 初版、例: 位相93）
-  const m0 = (p) => withControl(withPhase(SCENARIOS.A, p), { startMarginS: 0, endMarginS: 0 });
+  const m0 = (p) => withControl(withPhase(noWalk(SCENARIOS.A), p), { startMarginS: 0, endMarginS: 0 });
   for (const p of [93, 94, 98, 99, 100, 103, 104, 107, 108]) assert.equal(compare(m0(p)).runwave.stops, 0, `位相${p}`);
   let stops = 0;
   for (let p = 0; p < 120; p++) stops += compare(m0(p)).runwave.stops;
@@ -337,9 +338,9 @@ test('走っている間も longestRunS が更新される', () => {
 });
 
 test('reason は今の phase と合う（待機中 waiting、通過後 passed、制御OFFは常に off）', () => {
-  const off = withEnabled(SCENARIOS.B, false);
+  const off = withEnabled(noWalk(SCENARIOS.B), false);
   for (const s of trace(off)) assert.equal(s.reason, 'off');
-  const on = trace(withEnabled(withModel(SCENARIOS.B, 'length'), true));  // RUNWAVE でも止まる条件
+  const on = trace(withEnabled(withModel(noWalk(SCENARIOS.B), 'length'), true));  // RUNWAVE でも止まる条件
   for (const s of on.slice(1)) {
     if (s.phase === 'waiting') assert.equal(s.reason, 'waiting');
     else if (s.phase !== 'approach') assert.equal(s.reason, 'passed');
@@ -368,8 +369,13 @@ test('シナリオB: 通常は60秒停止、RUNWAVE は加速して停止なし'
 });
 
 test('length モデル（拡張）: シナリオB は横断20mだと回避できない', () => {
-  const b = compare(withModel(SCENARIOS.B, 'length'));
+  const b = compare(withModel(noWalk(SCENARIOS.B), 'length'));
   assert.equal(b.runwave.stops, 1);
+  // 既定（早歩き有効）では早歩きでつないで止まらない（変更前: 停止1回・60秒・総時間360秒 → 変更後: 停止0回・総時間366.77秒・早歩き1回）
+  const w = compare(withModel(SCENARIOS.B, 'length'));
+  assert.equal(w.runwave.stops, 0);
+  assert.equal(w.runwave.walkCount, 1);
+  near(w.runwave.totalTimeS, 366.766792, 1e-3);
 });
 
 test('デモ推奨: 通常は止まり RUNWAVE は止まらない。位相±5秒でも成立', () => {
@@ -431,7 +437,7 @@ test('改定案のデモ: 通常は止まり RUNWAVE は止まらない。位相
 });
 
 // ---------- 早歩きフェーズ（v0.4.0） ----------
-const W400 = withCrossing(SCENARIOS.A, 15);  // 400m・余裕3/5秒・横断長15m（走りだけでは止まる位相がある）
+const W400 = noWalk(withCrossing(SCENARIOS.A, 15));  // 400m・余裕3/5秒・横断長15m（走りだけでは止まる位相がある）
 const WALK = { walk: { enabled: true } };
 const walkCfg = (p, extra = {}) => withControl(withPhase(W400, p), { ...WALK, ...extra });
 
@@ -452,7 +458,7 @@ test('早歩き：手計算と一致（400m を 5.3km/h で 271.7秒・5.8km/h �
 test('早歩き：walk.enabled=false なら、今までと完全に同じ（state に新しい項目も無い）', () => {
   for (let p = 0; p < 120; p += 7) {
     const cfg = withPhase(W400, p);
-    assert.deepEqual(simulate(withControl(cfg, { walk: { enabled: false } })), simulate(cfg));
+    assert.deepEqual(simulate(withControl(cfg, { walk: { enabled: false, minKmh: 5.0, maxKmh: 5.5 } })), simulate(withControl(cfg, { walk: { enabled: false } })));
   }
   assert.equal('gait' in createRun(W400), false);
 });

@@ -33,7 +33,7 @@ export const DEFAULT_CONTROL = {
   // horizonS はその上限（計算の打ち切り）。既定は十分長く、通常の距離では効かない（v0.2.0 以前の 240 秒固定は廃止）
   horizonS: 3600,
   // 早歩きフェーズ：走り（通常BPM±maxDeltaBpm）では間に合わないときだけ、早歩きでつなぐ。enabled: false なら従来と完全に同じ
-  walk: { enabled: false, minKmh: 5.3, maxKmh: 5.8, stepKmh: 0.1 },
+  walk: { enabled: true, minKmh: 5.3, maxKmh: 5.8, stepKmh: 0.1 },
 };
 const DEFAULT_WALK_STRIDE_M = 0.75;   // 早歩きの歩幅（歩/分の目安を出すため）【仮】
 

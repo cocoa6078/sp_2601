@@ -23,11 +23,11 @@ export const KNOWN_UNUSED_CORE_EXPORTS = ['calibrate', 'canEnter', 'chooseTarget
 export const REQUIRED_STATE_KEYS = ['tick', 't', 'x', 'bpm', 'targetBpm', 'mode', 'phase', 'stops', 'stopTimeS', 'stoppedAtT', 'finished', 'finishTimeS'];
 /** ダッシュボードが意味を知っている state の項目（これ以外は「新しい項目」） */
 // core v0.3.0 で reason（目標の理由）とリズムの指標が追加された
-export const KNOWN_STATE_KEYS = [...REQUIRED_STATE_KEYS, 'signal', 'minBpm', 'maxBpm', 'totalBpmChange', 'history', 'reason', 'deviationBpmS', 'offBaseTimeS', 'runStartT', 'longestRunS'];
+export const KNOWN_STATE_KEYS = [...REQUIRED_STATE_KEYS, 'signal', 'minBpm', 'maxBpm', 'totalBpmChange', 'history', 'reason', 'deviationBpmS', 'offBaseTimeS', 'runStartT', 'longestRunS', 'gait', 'speedMps', 'targetSpeedKmh', 'walkUntilX', 'walkCount', 'walkTimeS', 'walkDistanceM', 'walkMinBpm', 'walkMaxBpm'];
 /** summarize の結果に必要な項目 */
 export const REQUIRED_SUMMARY_KEYS = ['finished', 'stops', 'stopTimeS', 'totalTimeS'];
 /** ダッシュボードが意味を知っている summary の項目（これ以外は「その他の集計」） */
-export const KNOWN_SUMMARY_KEYS = ['enabled', 'crossingModel', 'finished', 'termination', 'stops', 'stopTimeS', 'totalTimeS', 'minBpm', 'maxBpm', 'totalBpmChange', 'deviationBpmS', 'offBaseTimeS', 'longestRunS', 'baseBpm'];
+export const KNOWN_SUMMARY_KEYS = ['enabled', 'crossingModel', 'finished', 'termination', 'stops', 'stopTimeS', 'totalTimeS', 'minBpm', 'maxBpm', 'totalBpmChange', 'deviationBpmS', 'offBaseTimeS', 'longestRunS', 'baseBpm', 'walkCount', 'walkTimeS', 'walkDistanceM', 'walkMinBpm', 'walkMaxBpm'];
 
 // 契約チェックで createRun / step を試すときの最小の config（シナリオが取れなかったときだけ使う）
 const PROBE_CONFIG = {
@@ -44,7 +44,7 @@ const has = (ns, name) => ns != null && ns[name] !== undefined;
 const EXPECT_NOTES = {
   A: '減速して停止を回避するケース（停止はなくなるが所要時間は長くなる）',
   B: '加速して停止を回避し、通常走行より早くゴールするケース',
-  'B-length': '横断幅も考慮すると回避できないケース（RUNWAVE でも止まる）',
+  'B-length': '横断幅も考慮するケース（走りだけでは止まるが、早歩きでつないで回避。通常より少し遅い）',
   'DEMO.sub': '減速して停止を回避するケース（core の DEMO.sub）',
 };
 export const UNKNOWN_SCENARIO_NOTE = 'core/scenarios.js で追加されたシナリオ';

@@ -43,7 +43,7 @@ export const DEMO_800M = {
 
 // ---------- 早歩きフェーズの比較シナリオ（v0.4.0・未合意） ----------
 // 今のデモと同じ 400m・余裕3/5秒・横断長15m で、走りだけでは止まる位相に早歩きを有効にした例。
-// 既存の SCENARIOS / DEMO は変えない（ダッシュボードが対応してから切り替える）
+// 既存の SCENARIOS / DEMO も core の既定（10/17 から walk 有効）に従う（ダッシュボードが対応してから切り替える）
 const baseWalk = {
   runner: { strideM: 0.8, baseBpm: 150, walkStrideM: 0.75 },
   route: { crossingX: 400, goalX: 600 },

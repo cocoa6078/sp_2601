@@ -84,8 +84,9 @@
 - 再開の例外、安全余裕の適用範囲（規則5・7）
 - 候補の「変化が小さい」の基準（今は通常BPMとの差）
 
-## 早歩きフェーズ（v0.4.0・既定は無効）
-走り（通常BPM±maxDeltaBpm）では安全な青に間に合わず止まるしかないときだけ、時速5.3〜5.8km の早歩きでつなぐ。`control.walk.enabled: false`（既定）なら従来と完全に同じ結果で、state・summary に新しい項目も出ない。
+## 早歩きフェーズ（v0.4.0・v0.4.1 から既定で有効）
+> v0.4.1: 既定を `walk.enabled: true` に変更（10/17 チーム決定）。従来の数値が必要な config は `walk: { enabled: false }` を明示する。
+走り（通常BPM±maxDeltaBpm）では安全な青に間に合わず止まるしかないときだけ、時速5.3〜5.8km の早歩きでつなぐ。既定は `control.walk.enabled: true`（v0.4.1・10/17 チーム決定）。`walk: { enabled: false }` を明示すれば従来（走りのみ）と完全に同じ結果で、state・summary に新しい項目も出ない。
 
 - 設定：`control.walk = { enabled, minKmh: 5.3, maxKmh: 5.8, stepKmh: 0.1 }`、`runner.walkStrideM`（早歩きの歩幅、既定0.75m【仮】。API の calibration の `walkStrideM` から受け取れる）
 - 判断の順番：走りの候補で間に合う → 今まで通り ／ 通常BPMなら余裕なしで青（noMargin）→ 今まで通り ／ **早歩き**（mode `walking`、reason `walkBridge`）／ それでも無理 → 停止推奨
@@ -111,7 +112,7 @@
 | A phaseS=20 | point | 1回 / 20s / 320.0s | 0回 / 0s / 324.6s | 133–150（減速） |
 | B phaseS=100 | point | 1回 / 60s / 360.0s | 0回 / 0s / 284.1s | 150–164（加速） |
 | A | length（横断20m） | 1回 / 20s / 320.0s | 0回 / 0s / 325.9s | 133–150 |
-| B | length（横断20m） | 1回 / 60s / 360.0s | **1回 / 60s / 360.0s**（回避不可） | 150 |
+| B | length（横断20m） | 1回 / 60s / 360.0s | 0回 / 0s / 366.8s（v0.4.1 早歩き1回。walk:false なら 1回 / 60s / 360.0s・回避不可） | 150 |
 
 - v4 の想定どおり、point モデルでは **A は減速、B は加速で停止を回避**できた
 - RUNWAVE の目的は止まらずに走り続けること（総時間は参考値）

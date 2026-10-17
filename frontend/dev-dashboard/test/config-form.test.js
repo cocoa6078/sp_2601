@@ -11,7 +11,7 @@ test('固定シナリオ → フォーム → config が元の config と同じ�
   for (const sc of FIXED_SCENARIOS) {
     const form = configToForm(sc.config);
     assert.deepEqual(FIELD_IDS.filter((id) => typeof form[id] !== 'string'), []);
-    const { config, errors } = parseForm(form);
+    const { config, errors } = parseForm(form, sc.config);  // 画面と同じく現在の config を base にする（フォームにない walk を引き継ぐ）
     assert.deepEqual(errors, []);
     assert.deepEqual(clean(config), clean(sc.config), sc.id);
     assert.equal(config.control.enabled, undefined, 'enabled は 2 レーン側で決める');
@@ -52,7 +52,8 @@ test('信号周期と青・青点滅・赤の合計が合わないときは具�
 
 test('core の検証（goalX・baseBpm と調整上限・0.1 秒の倍数）のメッセージも画面に出せる', () => {
   const base = configToForm(getFixedScenario('B').config);
-  const goal = parseForm({ ...base, goalX: '300' });
+  const b0 = getFixedScenario('B').config;
+  const goal = parseForm({ ...base, goalX: '300' }, { ...b0, control: { ...b0.control, walk: { enabled: false } } });  // 走りのみで検証（早歩き有効時は別メッセージ）
   assert.equal(goal.config, null);
   assert.match(goal.errors[0].message, /^core の検証: goalX/);
   // length モデルでは goalX が crossingX + 横断幅 より先でなければならない
