@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RUNWAVE 経路・模擬信号シミュレーター</title>
+  </head>
+  <body>
+    <div id="app" class="app">
+      <header class="hdr">
+        <div class="brand">RUNWAVE</div>
+        <div class="hdr-mid">
+          <div class="notice">模擬経路・模擬信号によるシミュレーション／モデル上の推定値</div>
+          <div class="origin" id="origin"></div>
+        </div>
+        <nav class="hdr-right">
+          <button class="tab" data-view="setup" id="tab-setup">地図設定</button>
+          <button class="tab" data-view="run" id="tab-run">比較再生</button>
+          <button class="tab" id="rec-toggle" title="設定や診断を隠して収録向けの表示にする">収録モード</button>
+        </nav>
+      </header>
+
+      <div class="bar" id="bar"></div>
+
+      <main class="body">
+        <section class="mapwrap">
+          <div id="map"></div>
+          <div class="map-banner" id="map-banner" hidden></div>
+          <div class="sigbox diag" id="sigbox"></div>
+          <div class="legend" id="legend"></div>
+        </section>
+        <aside class="side" id="side"><div id="setup-panel" hidden></div><div id="run-panel"></div></aside>
+      </main>
+
+      <footer class="bottom" id="bottom"></footer>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
