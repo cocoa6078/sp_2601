@@ -393,26 +393,22 @@ function calculatePointToSegmentDistanceM(pLat, pLon, aLat, aLon, bLat, bLon) {
   return R * Math.sqrt(dLat * dLat + dLon * dLon);
 }
 
-const requestRateLimits = new Map();
+const alongRouteRateLimits = new Map();
 
 app.post('/api/signals/along-route', (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
 
   const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
   const now = Date.now();
-  let rateRecord = requestRateLimits.get(clientIp);
+  let rateRecord = alongRouteRateLimits.get(clientIp);
   if (!rateRecord || now - rateRecord.windowStart > 60000) {
     rateRecord = { windowStart: now, count: 0 };
-    requestRateLimits.set(clientIp, rateRecord);
+    alongRouteRateLimits.set(clientIp, rateRecord);
   }
   rateRecord.count++;
   if (rateRecord.count > 30) {
     return res.status(429).json({
-      error: {
-        code: "RATE_LIMITED",
-        message: "Too many requests. Please try again later.",
-        retryable: true
-      }
+      error: { code: "RATE_LIMITED", message: "Too many requests. Please try again later.", retryable: true }
     });
   }
 
@@ -425,16 +421,9 @@ app.post('/api/signals/along-route', (req, res) => {
       error: { code: "INVALID_ROUTE_GEOMETRY", message: "GeoJSON LineString format is required.", retryable: false }
     });
   }
-
   if (route.coordinates.length < 2 || route.coordinates.length > 1000) {
     return res.status(400).json({
       error: { code: "INVALID_ROUTE_GEOMETRY", message: "Coordinate points must be between 2 and 1000.", retryable: false }
-    });
-  }
-
-  if (corridorM < 10 || corridorM > 100) {
-    return res.status(400).json({
-      error: { code: "INVALID_ROUTE_GEOMETRY", message: "corridorM must be between 10 and 100.", retryable: false }
     });
   }
 
