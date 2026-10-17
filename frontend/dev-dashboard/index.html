@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RUNWAVE 動作確認ダッシュボード</title>
+  </head>
+  <body>
+    <header class="top">
+      <h1>RUNWAVE 動作確認ダッシュボード</h1>
+      <p class="banner" role="note">
+        <strong>架空信号・固定歩幅によるシミュレーション</strong>（モデル上の推定値です）。ケイデンスの単位は
+        <strong>歩/分</strong>（心拍数ではありません）。SwiftUI の表示・動作の確認ではなく、core と API を Windows のブラウザで確かめる画面です。
+      </p>
+      <div id="status" class="status" aria-live="polite"></div>
+    </header>
+
+    <main>
+      <section id="scenario-section" class="card" aria-labelledby="h-scenario">
+        <h2 id="h-scenario">1. シナリオ</h2>
+        <div id="scenario-picker" class="scenario-picker"></div>
+        <div id="expected"></div>
+      </section>
+
+      <section id="sim-section" class="card" aria-labelledby="h-sim">
+        <h2 id="h-sim">2. 同条件の比較シミュレーター</h2>
+        <p class="hint">2 つのレーンの違いは「RUNWAVE の制御が ON か OFF か」だけです（信号・歩幅・位相・開始時刻はすべて同じ）。</p>
+        <div id="sim-controls" class="controls"></div>
+        <div id="sim-error" class="msg error" role="alert" hidden></div>
+        <div id="lanes" class="lanes"></div>
+        <div id="metrics"></div>
+        <div id="result" class="result"></div>
+      </section>
+
+      <section id="config-section" class="card" aria-labelledby="h-config">
+        <h2 id="h-config">3. 設定</h2>
+        <p class="hint">設定の変更は停止中（未開始・一時停止・ゴール後）だけできます。「適用してリセット」で両レーンを作り直します。</p>
+        <div id="form"></div>
+      </section>
+
+      <section id="api-section" class="card" aria-labelledby="h-api">
+        <h2 id="h-api">4. API 接続確認（GET のみ）</h2>
+        <div id="api"></div>
+      </section>
+
+      <section id="share-section" class="card" aria-labelledby="h-share">
+        <h2 id="h-share">5. 結果の共有</h2>
+        <div id="share"></div>
+      </section>
+
+      <section id="preview-section" class="card" aria-labelledby="h-preview">
+        <h2 id="h-preview">6. 端末風プレビュー</h2>
+        <div id="preview"></div>
+      </section>
+
+      <section id="checklist-section" class="card" aria-labelledby="h-check">
+        <h2 id="h-check">7. 担当別チェック（手動記録）</h2>
+        <div id="checklist"></div>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <p>RUNWAVE dev-dashboard（P0）。core は <code>core/</code> の実ファイルを参照しています。計算はコピーしていません。</p>
+    </footer>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

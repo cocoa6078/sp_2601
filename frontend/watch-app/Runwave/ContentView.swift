@@ -7,12 +7,13 @@
 //  .pbxproj への登録を不要にするため、全ての型をこのファイルに入れている。
 //
 //  - 対象: iOS 16+（ObservableObject / @Published / @StateObject。@Observable・#Preview は使わない）
-//  - import は SwiftUI と Foundation のみ（WatchConnectivity は未実装。NoWatchLink が代役）
+//  - WatchConnectivity は WatchConnectivityLink.swift に分離
 //  - 信号・到着予測・目標ケイデンスの計算は書かない（目標は手動設定のみ）
 //
 
 import SwiftUI
 import Foundation
+import Combine
 
 // MARK: - 基本の型
 
@@ -76,7 +77,7 @@ struct WatchMetrics: Codable, Equatable {
 
 // MARK: - Watch との通信口
 
-/// Watch との通信の抽象。将来 WCSession 実装に差し替える。
+/// Watch との通信の抽象。
 protocol WatchLink: AnyObject {
     var connectionState: WatchConnectionState { get }
     /// Watch から計測値が届いたとき呼ばれる（呼び出しスレッドは不定。受け側でメインへ寄せる）
@@ -94,16 +95,12 @@ protocol WatchLink: AnyObject {
     func workoutDidEnd()
 }
 
-/// Watch が無い（未実装の）ときの代役。常に未接続で、何もしない。偽データは流さない。
+/// プレビューや通信未使用時の代役。常に未接続で、何もしない。
 final class NoWatchLink: WatchLink {
     var connectionState: WatchConnectionState { .notConnected }
     var onMetrics: ((WatchMetrics) -> Void)?
     var onConnectionChange: ((WatchConnectionState) -> Void)?
 
-    // TODO(WatchConnectivity): WCSession 実装（WatchLink 準拠クラス）に差し替える。
-    //   - activate / reachability の変化で onConnectionChange を呼ぶ
-    //   - didReceiveMessage で WatchMetrics を組み立てて onMetrics を呼ぶ
-    //   - send(_:) で TargetCommand を sendMessage / updateApplicationContext する
     func send(_ command: TargetCommand) {}
     func workoutDidStart(sessionID: UUID) {}
     func workoutDidPause() {}
@@ -795,7 +792,11 @@ private struct ResultView: View {
 // MARK: - ルート
 
 struct ContentView: View {
-    @StateObject private var store = SessionStore()
+    @StateObject private var store: SessionStore
+
+    init(link: any WatchLink = WatchConnectivityLink()) {
+        _store = StateObject(wrappedValue: SessionStore(link: link))
+    }
 
     var body: some View {
         // NavigationStack は使わない。画面は store.screen で切り替えるので、
@@ -818,6 +819,6 @@ struct ContentView: View {
 
 struct ContentView_Previews: PreviewProvider {
     static var previews: some View {
-        ContentView()
+        ContentView(link: NoWatchLink())
     }
 }

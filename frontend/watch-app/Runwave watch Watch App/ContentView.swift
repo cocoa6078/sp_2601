@@ -6,7 +6,7 @@
 import SwiftUI
 
 struct ContentView: View {
-    @State private var targetCadence = 160
+    @StateObject private var connectivity = WatchConnectivityManager()
     @State private var isDemoRunning = false
     @State private var isPaused = false
     @State private var isWorkoutComingSoonPresented = false
@@ -39,24 +39,23 @@ struct ContentView: View {
                         .foregroundStyle(.secondary)
                 }
 
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(connectivity.isReachable ? .green : .gray)
+                        .frame(width: 6, height: 6)
+                    Text(connectivity.isReachable ? "iPhone接続中" : "iPhone未接続")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
                 VStack(spacing: 2) {
                     Text("目標ケイデンス")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Stepper(value: $targetCadence, in: 120...190, step: 5) {
-                        Text("\(targetCadence) 歩/分")
-                            .font(.system(.title3, design: .rounded, weight: .semibold))
-                            .monospacedDigit()
-                            .accessibilityLabel("目標 \(targetCadence) 歩/分")
-                    }
-                    .labelsHidden()
-                    HStack {
-                        Text("120")
-                        Spacer()
-                        Text("190")
-                    }
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    Text("\(connectivity.targetCadence) 歩/分")
+                        .font(.system(.title3, design: .rounded, weight: .semibold))
+                        .monospacedDigit()
+                        .accessibilityLabel("目標 \(connectivity.targetCadence) 歩/分")
                 }
 
                 VStack(spacing: 8) {
@@ -103,7 +102,7 @@ struct ContentView: View {
                 Text("目標")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                Text("\(targetCadence)")
+                Text("\(connectivity.targetCadence)")
                     .font(.system(size: 38, weight: .bold, design: .rounded))
                     .monospacedDigit()
                     .contentTransition(.numericText())
@@ -120,7 +119,7 @@ struct ContentView: View {
             }
             .font(.caption)
 
-            Text("テンポ出力：未接続")
+            Text("\(connectivity.sessionStatus) · テンポ出力：未接続")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 
