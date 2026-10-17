@@ -8,6 +8,8 @@ final class WatchConnectivityLink: NSObject, WatchLink, WCSessionDelegate {
     var onMetrics: ((WatchMetrics) -> Void)?
     var onConnectionChange: ((WatchConnectionState) -> Void)?
     var onGoalSetupRequested: ((String?) -> Void)?
+    var onWorkoutControl: ((String) -> Void)?
+    var onTargetCadenceAdjustment: ((Int) -> Void)?
     var onOutputSettingsApplied: ((TempoOutputSettings) -> Void)?
     var onOutputError: ((String) -> Void)?
     private var outputSettings = TempoOutputSettings.load()
@@ -39,6 +41,10 @@ final class WatchConnectivityLink: NSObject, WatchLink, WCSessionDelegate {
             Key.type: "target",
             Key.target: command.targetCadence,
             Key.mode: command.mode.rawValue,
+            "activityMode": command.activityMode.rawValue,
+            "cadenceBaseline": command.cadenceBaseline,
+            "cadenceAdjustment": command.cadenceAdjustment,
+            "guidedCadence": command.guidedCadence ?? command.targetCadence,
             Key.issuedAt: command.issuedAt.timeIntervalSince1970,
             Key.sessionID: command.sessionID.uuidString
         ])
@@ -47,7 +53,16 @@ final class WatchConnectivityLink: NSObject, WatchLink, WCSessionDelegate {
     func workoutDidStart(sessionID: UUID) { send([Key.type: "workoutStart", Key.sessionID: sessionID.uuidString]) }
     func workoutDidPause() { send([Key.type: "workoutPause"]) }
     func workoutDidResume() { send([Key.type: "workoutResume"]) }
-    func workoutDidEnd() { send([Key.type: "workoutEnd"]) }
+    func workoutDidEnd(elapsed: TimeInterval, distance: Double?, averageCadence: Int?, activityMode: ActivityMode) {
+        var payload: [String: Any] = [
+            Key.type: "workoutEnd",
+            "elapsed": elapsed,
+            "activityMode": activityMode.rawValue
+        ]
+        if let distance { payload["distance"] = distance }
+        if let averageCadence { payload["averageCadence"] = averageCadence }
+        send(payload)
+    }
 
     func updateOutputSettings(_ settings: TempoOutputSettings) {
         if settings != outputSettings || outputRevision == 0 {
@@ -77,11 +92,13 @@ final class WatchConnectivityLink: NSObject, WatchLink, WCSessionDelegate {
         }
     }
 
-    func previewOutput(targetCadence: Int) {
+    func previewOutput(targetCadence: Int, activityMode: ActivityMode) {
         guard session.activationState == .activated, session.isReachable else { return }
+        let upperBound = activityMode == .walking ? 140 : 190
         let payload = outputPayload.merging([
             Key.type: "outputPreview", "requestedAt": Date().timeIntervalSince1970,
-            Key.target: min(max(targetCadence, 120), 190)
+            Key.target: min(max(targetCadence, activityMode == .walking ? 80 : 110), upperBound),
+            "activityMode": activityMode.rawValue
         ]) { _, new in new }
         // A preview is never queued: it must not unexpectedly play after a later reconnect.
         session.sendMessage(payload, replyHandler: nil) { [weak self] _ in
@@ -136,6 +153,23 @@ final class WatchConnectivityLink: NSObject, WatchLink, WCSessionDelegate {
         if message[Key.type] as? String == "goalSetupRequest" {
             let mode = message["activityMode"] as? String
             DispatchQueue.main.async { [weak self] in self?.onGoalSetupRequested?(mode) }
+            return
+        }
+        if message[Key.type] as? String == "workoutPause" {
+            DispatchQueue.main.async { [weak self] in self?.onWorkoutControl?("pause") }
+            return
+        }
+        if message[Key.type] as? String == "workoutResume" {
+            DispatchQueue.main.async { [weak self] in self?.onWorkoutControl?("resume") }
+            return
+        }
+        if message[Key.type] as? String == "workoutEnd" {
+            DispatchQueue.main.async { [weak self] in self?.onWorkoutControl?("end") }
+            return
+        }
+        if message[Key.type] as? String == "targetAdjust",
+           let delta = message["delta"] as? Int {
+            DispatchQueue.main.async { [weak self] in self?.onTargetCadenceAdjustment?(delta) }
             return
         }
         if message[Key.type] as? String == "outputSettingsApplied",

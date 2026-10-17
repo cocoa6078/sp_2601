@@ -3,7 +3,7 @@ import CoreLocation
 import CoreMotion
 import Foundation
 
-enum ActivityMode: String, CaseIterable, Identifiable {
+enum ActivityMode: String, CaseIterable, Identifiable, Codable {
     case walking
     case running
 

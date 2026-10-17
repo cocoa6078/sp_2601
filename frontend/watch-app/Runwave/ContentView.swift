@@ -66,6 +66,11 @@ struct TargetCommand: Codable, Equatable {
     /// 目標ケイデンス（歩/分）
     var targetCadence: Int
     var mode: TargetMode
+    var activityMode: ActivityMode
+    var cadenceBaseline: Int
+    var cadenceAdjustment: Int
+    /// 信号制御が選んだ現在の案内ケイデンス。未設定なら通常の目標値を使う。
+    var guidedCadence: Int?
     var issuedAt: Date
     var sessionID: UUID
 }
@@ -93,10 +98,12 @@ protocol WatchLink: AnyObject {
     /// 接続状態が変わったとき呼ばれる（同上）
     var onConnectionChange: ((WatchConnectionState) -> Void)? { get set }
     var onGoalSetupRequested: ((String?) -> Void)? { get set }
+    var onWorkoutControl: ((String) -> Void)? { get set }
+    var onTargetCadenceAdjustment: ((Int) -> Void)? { get set }
     var onOutputSettingsApplied: ((TempoOutputSettings) -> Void)? { get set }
     var onOutputError: ((String) -> Void)? { get set }
     func updateOutputSettings(_ settings: TempoOutputSettings)
-    func previewOutput(targetCadence: Int)
+    func previewOutput(targetCadence: Int, activityMode: ActivityMode)
 
     /// 目標コマンドを Watch へ送る
     func send(_ command: TargetCommand)
@@ -105,7 +112,7 @@ protocol WatchLink: AnyObject {
     func workoutDidStart(sessionID: UUID)
     func workoutDidPause()
     func workoutDidResume()
-    func workoutDidEnd()
+    func workoutDidEnd(elapsed: TimeInterval, distance: Double?, averageCadence: Int?, activityMode: ActivityMode)
 }
 
 /// プレビューや通信未使用時の代役。常に未接続で、何もしない。
@@ -114,16 +121,18 @@ final class NoWatchLink: WatchLink {
     var onMetrics: ((WatchMetrics) -> Void)?
     var onConnectionChange: ((WatchConnectionState) -> Void)?
     var onGoalSetupRequested: ((String?) -> Void)?
+    var onWorkoutControl: ((String) -> Void)?
+    var onTargetCadenceAdjustment: ((Int) -> Void)?
     var onOutputSettingsApplied: ((TempoOutputSettings) -> Void)?
     var onOutputError: ((String) -> Void)?
     func updateOutputSettings(_ settings: TempoOutputSettings) {}
-    func previewOutput(targetCadence: Int) {}
+    func previewOutput(targetCadence: Int, activityMode: ActivityMode) {}
 
     func send(_ command: TargetCommand) {}
     func workoutDidStart(sessionID: UUID) {}
     func workoutDidPause() {}
     func workoutDidResume() {}
-    func workoutDidEnd() {}
+    func workoutDidEnd(elapsed: TimeInterval, distance: Double?, averageCadence: Int?, activityMode: ActivityMode) {}
 }
 
 // MARK: - 表示用の小さな型
@@ -161,12 +170,12 @@ struct MetricDisplay {
 final class SessionStore: ObservableObject {
 
     // 目標ケイデンスの範囲（歩/分）
-    static let minCadence = 120
-    static let maxCadence = 190
-    static let defaultCadence = 160
+    static let defaultCadence = 140
 
     // MARK: 公開状態
     @Published private(set) var targetCadence: Int = SessionStore.defaultCadence
+    @Published private(set) var cadenceBaseline: Int = SessionStore.defaultCadence
+    @Published private(set) var guidedCadence: Int?
     @Published private(set) var connectionState: WatchConnectionState
     @Published private(set) var workoutState: WorkoutState = .idle
     @Published private(set) var latestMetrics: WatchMetrics?
@@ -189,6 +198,7 @@ final class SessionStore: ObservableObject {
     // MARK: 経過時間（iPhone の時計で積算。一時停止中は増えない）
     private var accumulated: TimeInterval = 0
     private var runStartedAt: Date?
+    private var cadenceAdjustment = 0
 
     private let link: any WatchLink
 
@@ -206,6 +216,18 @@ final class SessionStore: ObservableObject {
             DispatchQueue.main.async {
                 self?.goalSetupActivityMode = rawMode.flatMap(ActivityMode.init(rawValue:))
                 self?.goalSetupRequested = true
+            }
+        }
+        link.onWorkoutControl = { [weak self] action in
+            DispatchQueue.main.async {
+                if action == "pause" { self?.pause() }
+                else if action == "resume" { self?.resume() }
+                else if action == "end" { self?.end() }
+            }
+        }
+        link.onTargetCadenceAdjustment = { [weak self] delta in
+            DispatchQueue.main.async {
+                self?.adjustTargetCadence(by: delta)
             }
         }
         link.onOutputSettingsApplied = { [weak self] settings in
@@ -232,17 +254,44 @@ final class SessionStore: ObservableObject {
 
     // MARK: 目標ケイデンス
 
-    /// 目標ケイデンスを5歩/分単位にそろえる（120...190）。セッション中なら Watch へ送る。
+    var cadenceRange: ClosedRange<Int> {
+        activityMode == .walking ? 80...140 : 110...190
+    }
+
+    /// 外部から届いた絶対値を設定する。
     func setTargetCadence(_ value: Int) {
-        let bounded = min(max(value, Self.minCadence), Self.maxCadence)
-        let rounded = Int((Double(bounded) / 5).rounded()) * 5
-        let normalized = min(max(rounded, Self.minCadence), Self.maxCadence)
-        guard normalized != targetCadence else { return }
-        targetCadence = normalized
+        let range = cadenceRange
+        let bounded = min(max(value, range.lowerBound), range.upperBound)
+        guard bounded != targetCadence else { return }
+        targetCadence = bounded
+        cadenceAdjustment = bounded - cadenceBaseline
         // ホームでの変更は「開始時」にまとめて送る。セッション中だけ即時送信する。
         if workoutState == .running || workoutState == .paused {
             sendCurrentTarget()
         }
+    }
+
+    /// 測定した自然なケイデンスを基準に±5する。上限で一時的に丸めても基準からの差を保つ。
+    func adjustTargetCadence(by delta: Int) {
+        guard delta != 0, abs(delta) <= 40 else { return }
+        let range = cadenceRange
+        let nextAdjustment = cadenceAdjustment + delta
+        let next = min(max(cadenceBaseline + nextAdjustment, range.lowerBound), range.upperBound)
+        guard next != targetCadence else { return }
+        cadenceAdjustment = next - cadenceBaseline
+        targetCadence = next
+        if workoutState == .running || workoutState == .paused { sendCurrentTarget() }
+    }
+
+    /// 信号制御が選んだ案内値をWatchへ反映する。nilなら通常目標に戻す。
+    func setSignalGuidanceCadence(_ value: Int?) {
+        if let value {
+            let range = cadenceRange
+            guidedCadence = min(max(value, range.lowerBound), range.upperBound)
+        } else {
+            guidedCadence = nil
+        }
+        if workoutState == .running || workoutState == .paused { sendCurrentTarget() }
     }
 
     // MARK: Watch のテンポ出力
@@ -276,7 +325,7 @@ final class SessionStore: ObservableObject {
 
     func previewOutput() {
         guard connectionState == .connected else { return }
-        link.previewOutput(targetCadence: targetCadence)
+        link.previewOutput(targetCadence: targetCadence, activityMode: activityMode)
     }
 
     // MARK: 終了地点
@@ -328,6 +377,10 @@ final class SessionStore: ObservableObject {
         TargetCommand(
             targetCadence: targetCadence,
             mode: .manual,
+            activityMode: activityMode,
+            cadenceBaseline: cadenceBaseline,
+            cadenceAdjustment: cadenceAdjustment,
+            guidedCadence: guidedCadence,
             issuedAt: Date(),
             sessionID: sessionID
         )
@@ -343,7 +396,10 @@ final class SessionStore: ObservableObject {
         guard workoutState == .idle || workoutState == .ended else { return }
         guard goal?.isValid == true else { return }
         activityMode = mode
-        targetCadence = Self.normalizedCadence(measuredCadence)
+        cadenceBaseline = normalizedCadence(measuredCadence)
+        cadenceAdjustment = 0
+        targetCadence = cadenceBaseline
+        guidedCadence = nil
         sessionID = UUID()
         accumulated = 0
         runStartedAt = Date()
@@ -357,10 +413,9 @@ final class SessionStore: ObservableObject {
         link.workoutDidStart(sessionID: sessionID)
     }
 
-    private static func normalizedCadence(_ value: Int) -> Int {
-        let bounded = min(max(value, minCadence), maxCadence)
-        let rounded = Int((Double(bounded) / 5).rounded()) * 5
-        return min(max(rounded, minCadence), maxCadence)
+    private func normalizedCadence(_ value: Int) -> Int {
+        let range = activityMode == .walking ? 80...140 : 110...190
+        return min(max(value, range.lowerBound), range.upperBound)
     }
 
     func pause() {
@@ -389,7 +444,12 @@ final class SessionStore: ObservableObject {
             activityMode: activityMode
         )
         screen = .result
-        link.workoutDidEnd()
+        link.workoutDidEnd(
+            elapsed: summary?.elapsed ?? accumulated,
+            distance: summary?.distance,
+            averageCadence: summary?.averageCadence,
+            activityMode: activityMode
+        )
     }
 
     /// 結果画面からホームへ戻る。
@@ -573,21 +633,36 @@ private struct MetricCard: View {
     }
 }
 
-/// 目標ケイデンスを 5 歩/分刻みで調整する Stepper。
+/// 自然な測定値を基準に、目標ケイデンスを5歩/分刻みで調整する。
 private struct CadenceStepper: View {
     @ObservedObject var store: SessionStore
 
     var body: some View {
-        Stepper(
-            value: Binding(
-                get: { store.targetCadence },
-                set: { store.setTargetCadence($0) }
-            ),
-            in: SessionStore.minCadence...SessionStore.maxCadence,
-            step: 5
-        ) {
+        VStack(spacing: 4) {
+            HStack(spacing: 12) {
+                Button { store.adjustTargetCadence(by: -5) } label: {
+                    Image(systemName: "minus.circle.fill")
+                        .font(.title2)
+                }
+                .opacity(store.targetCadence <= store.cadenceRange.lowerBound ? 0.45 : 1)
+
+                Text("\(store.targetCadence) 歩/分")
+                    .font(.title3.bold().monospacedDigit())
+                    .contentTransition(.numericText())
+                    .frame(minWidth: 112)
+                    .multilineTextAlignment(.center)
+
+                Button { store.adjustTargetCadence(by: 5) } label: {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.title2)
+                }
+                .opacity(store.targetCadence >= store.cadenceRange.upperBound ? 0.45 : 1)
+            }
+            .buttonStyle(.plain)
+
             Text("目標を調整（5 歩/分刻み）")
-                .font(.subheadline)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 }
