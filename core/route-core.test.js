@@ -39,6 +39,49 @@ test('route: 入力検証（goalM・atM の順番と重なり・id の重複・�
   assert.doesNotThrow(() => validateRouteConfig(ROUTE));
 });
 
+test('route: 2m/s・length の近接信号（100.05m・横断15m・次115.06m）を拒否する', () => {
+  const c = {
+    runner: { strideM: 0.8, baseBpm: 150 },
+    control: { enabled: false, crossingModel: 'length', maxDeltaBpm: 0 },
+    goalM: 200,
+    signals: [
+      { id: 's1', atM: 100.05, signal: { cycleS: 120, greenS: 120, yellowS: 0, redS: 0, phaseS: 0, crossingM: 15 } },
+      { id: 's2', atM: 115.06, signal: { cycleS: 120, greenS: 0, yellowS: 0, redS: 120, phaseS: 0, crossingM: 15 } },
+    ],
+  };
+  assert.throws(() => validateRouteConfig(c), RangeError);
+  assert.throws(() => createRouteRun(c), RangeError);
+  // 1 tick 分より離せば、次の赤信号を越えずに止まる。
+  c.signals[1].atM = 115.251;
+  let s = createRouteRun(c);
+  while (s.t < 60) {
+    const next = stepRoute(s, c);
+    assert.ok(next.x >= s.x);
+    assert.ok(next.x <= c.signals[1].atM);
+    s = next;
+  }
+  assert.equal(s.phase, 'waiting');
+  assert.equal(s.nextSignalId, 's2');
+});
+
+test('route: 信号間隔は最大BPMの1 tick 分を超える必要がある（境界・既定値・高速設定）', () => {
+  const cases = [
+    { runner: { strideM: 0.8, baseBpm: 150 }, control: { maxDeltaBpm: 0 }, gapM: 0.2 },
+    { runner: { strideM: 0.8, baseBpm: 150 }, control: {}, gapM: 17 / 75 },
+    { runner: { strideM: 2, baseBpm: 180 }, control: { maxDeltaBpm: 60 }, gapM: 0.8 },
+  ];
+  for (const { runner, control, gapM } of cases) for (const enabled of [false, true]) for (const crossingModel of ['point', 'length']) {
+    const c = { ...ROUTE, runner, control: { ...control, enabled, crossingModel }, signals: ROUTE.signals.slice(0, 2) };
+    const endM = c.signals[0].atM + c.signals[0].signal.crossingM;
+    for (const delta of [-1e-6, 0, 1e-6]) {
+      const near = { ...c, signals: [c.signals[0], { ...c.signals[1], atM: endM + gapM + delta }] };
+      if (delta <= 0) assert.throws(() => validateRouteConfig(near), RangeError);
+      else assert.equal(validateRouteConfig(near), true);
+    }
+  }
+  assert.equal(validateRouteConfig({ ...ROUTE, signals: [{ ...ROUTE.signals[0], atM: 0.01 }] }), true);
+});
+
 // ---------- 1信号の互換 ----------
 test('route: 信号が1つなら、既存の compare と停止回数・停止時間・所要時間などが一致（A/B/W・早歩き無効・length）', () => {
   const cases = [SCENARIOS.A, SCENARIOS.B, SCENARIOS_WALK.W, withControl(SCENARIOS.A, { walk: { enabled: false } }),
@@ -106,6 +149,42 @@ test('route: 赤待ちのケースもある（通常走行）。停止時間の�
 test('route: ステップの途中の到着を、その瞬間の時刻で記録する', () => {
   const { state } = simulateRoute(ROUTE);
   assert.ok(state.events.some((e) => e.type === 'arrive' && Math.abs(e.t * 10 - Math.round(e.t * 10)) > 1e-6));
+});
+
+test('route: 青終了の直前のイベント時刻を丸めず、記録した時刻で色を再現できる', () => {
+  const arriveT = 0.9999998;
+  const c = {
+    runner: { strideM: 0.8, baseBpm: 150 }, control: { enabled: false }, goalM: 4,
+    signals: [{ id: 's1', atM: 2 * arriveT, signal: { cycleS: 2, greenS: 1, yellowS: 0, redS: 1, phaseS: 0, crossingM: 0.4 } }],
+  };
+  const { state } = simulateRoute(c);
+  for (const e of state.events) {
+    assert.equal(e.color, signalAt(c.signals[0].signal, e.t).color);
+    if (e.type === 'arrive' || e.type === 'crossStart') {
+      near(e.t, arriveT, 1e-12);
+      assert.equal(e.color, 'green');
+    }
+  }
+  assert.equal(state.stops, 0);
+});
+
+test('route: 同じ tick 内の再開・待機後の再開とも、青開始の補正を残す', () => {
+  for (const resumeT of [0.08, 0.18]) {
+    const c = {
+      runner: { strideM: 0.8, baseBpm: 150 }, control: { enabled: false }, goalM: 2,
+      signals: [{ id: 's1', atM: 0.1, signal: { cycleS: 2, greenS: 1, yellowS: 0, redS: 1, phaseS: 2 - resumeT, crossingM: 0.4 } }],
+    };
+    const { state } = simulateRoute(c);
+    assert.equal(state.stops, 1);
+    assert.deepEqual(state.events.map((e) => e.type), ['arrive', 'waitStart', 'waitEnd', 'crossStart', 'crossEnd']);
+    for (const e of state.events) {
+      assert.equal(e.color, signalAt(c.signals[0].signal, e.t).color);
+      if (e.type === 'waitEnd' || e.type === 'crossStart') {
+        near(e.t, resumeT + 1e-6, 2e-9);
+        assert.equal(e.color, 'green');
+      }
+    }
+  }
 });
 
 test('route: RUNWAVE は通常走行より止まる回数・停止時間が増えない', () => {
@@ -182,6 +261,23 @@ const shifted = (off, ph) => ({
   signals: API.map(([id, d, c, g, r, p]) => ({ id, atM: off + d, signal: { cycleS: c, greenS: g, yellowS: 5, redS: r, phaseS: p + ph, crossingM: 15 } })),
 });
 
+test('route 先読み: 制御OFFでは計画を作らず、lookahead: false と走行・イベント・集計が一致する', () => {
+  const c = withRouteControl({ enabled: false });
+  const result = simulateRoute(c);
+  assert.equal(result.state.plan, undefined);
+  assert.deepEqual(result, simulateRoute({ ...c, lookahead: false }));
+});
+
+test('route 先読み: 連続する最善区間を広げた窓も試走して選べる', () => {
+  const c = shifted(100, 50);
+  let s = createRouteRun(c);
+  while (s.signalIndex === 0) s = stepRoute(s, c);
+  const { window } = stepRoute(s, c).plan;
+  assert.ok(window);
+  near(window.startT, 243.75);
+  near(window.endT, 246.599381);   // 隣の点までの拡張だと 245 秒までしか取れない
+});
+
 test('route 先読み: デモ5交差点では、今の信号だけを見るより止まる回数が減る（2回 → 0回）', () => {
   const a = simulateRoute({ ...ROUTE, lookahead: false }).summary;
   const b = simulateRoute(ROUTE).summary;
@@ -189,12 +285,18 @@ test('route 先読み: デモ5交差点では、今の信号だけを見るよ�
   assert.equal(b.stops, 0);
 });
 
-test('route 先読み: スタート位置と位相を変えた経路で、止まる回数が増えない', () => {
-  for (const off of [100, 250, 400]) for (const ph of [0, 30, 60]) {
+test('route 先読み: 90経路で停止が増えず、窓の拡張前の停止合計160回を超えない', () => {
+  let stopsNow = 0, stopsAhead = 0;
+  for (let off = 100; off <= 500; off += 50) for (let ph = 0; ph < 100; ph += 10) {
     const c = shifted(off, ph);
     const a = simulateRoute({ ...c, lookahead: false }).summary, b = simulateRoute(c).summary;
+    assert.ok(a.finished && b.finished);
     assert.ok(b.stops <= a.stops, `${off}/${ph}: ${a.stops} → ${b.stops}`);
+    stopsNow += a.stops;
+    stopsAhead += b.stops;
   }
+  assert.equal(stopsNow, 188);
+  assert.ok(stopsAhead <= 160, `先読みの停止合計: ${stopsAhead}`);
 });
 
 test('route 先読み: RUNWAVE でも赤待ちが必要な経路では待つ（非青で横断に入らない）', () => {

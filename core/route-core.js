@@ -34,6 +34,9 @@ export function validateRouteConfig(config) {
     need(isObj(s.signal), `signals[${i}].signal がありません`);
     need(s.atM > prevEnd, `signals[${i}].atM は前の信号の横断の先（atM + crossingM より先）にする`);
     validateConfig(legConfig(config, i));   // 信号の形・横断長・ゴールの位置などは既存 core の検証を使う
+    // 1 tick で横断終了と次の信号をまたぐと、次の信号を判定できないため。
+    const minGapM = speedsOf(config).vFast * DT;
+    need(i === 0 || s.atM > prevEnd + minGapM, `signals[${i}].atM は前の横断終了から1 tick の最大移動距離（${minGapM}m）より離す`);
     prevEnd = s.atM + s.signal.crossingM;
   });
   need(config.goalM > prevEnd, 'goalM は最後の信号の横断の先にする');
@@ -154,13 +157,18 @@ function planArriveWindow(state, config) {
   // 最善と同じ見積もりになる区間（同じ時間帯の中で連続する範囲）を、着いてよい時間帯として渡す
   const same = samples.filter((s) => s.w === best.w && !better(best.cost, s.cost));
   let lo = best.a, hi = best.a;
-  for (const s of same.sort((x, y) => x.a - y.a)) {
-    if (s.a < best.a && s.a >= lo - SAMPLE_S - 1e-9) lo = s.a;
+  for (const s of same.filter((s) => s.a < best.a).sort((x, y) => y.a - x.a)) {
+    if (s.a < lo - SAMPLE_S - 1e-9) break;
+    lo = s.a;
   }
-  for (const s of same.sort((x, y) => y.a - x.a)) {
-    if (s.a > best.a && s.a <= hi + SAMPLE_S + 1e-9) hi = s.a;
+  for (const s of same.filter((s) => s.a > best.a).sort((x, y) => x.a - y.a)) {
+    if (s.a > hi + SAMPLE_S + 1e-9) break;
+    hi = s.a;
   }
-  return { startT: round6(lo === best.w.lo ? best.w.lo : lo - SAMPLE_S / 2), endT: round6(Math.min(best.w.hi, hi + SAMPLE_S)), cost: best.cost };
+  const windowOf = (lo, hi) => ({ startT: round6(lo === best.w.lo ? best.w.lo : lo - SAMPLE_S / 2), endT: round6(Math.min(best.w.hi, hi + SAMPLE_S)) });
+  // 早歩きは窓の中央を目指すので、広げると停止が増えることがある。最善点の近傍も試走の候補に残す。
+  const sampleWindow = windowOf(Math.max(lo, best.a - SAMPLE_S), Math.min(hi, best.a + SAMPLE_S));
+  return { ...windowOf(lo, hi), sampleWindow, cost: best.cost };
 }
 
 // 時間帯 win を今の信号に固定し、その先は今の信号だけを見る選び方でゴールまで走らせた結果 [停止回数, 停止時間]
@@ -174,17 +182,23 @@ function tryWindow(state, config, win) {
 }
 
 // 信号 i に向かい始めたときに1回だけ、着く時間帯を決める（渡るまで固定）。
-// 候補（絞らない／見積もりで最善の時間帯／届く安全な青の時間帯それぞれ）を、実際に core で走らせて比べ、
+// 候補（絞らない／最善点の近傍／最善の連続した時間帯／届く安全な青の時間帯それぞれ）を、実際に core で走らせて比べ、
 // 停止回数 → 停止時間 の順で最も良いものを選ぶ。同じなら絞らない（今の信号だけを見る選び方と同じ）
 function chooseLegWindow(state, config) {
   const i = state.signalIndex;
   const sp = speedsOf(config);
   const sig = config.signals[i];
   const cands = [null];
+  const addWindow = (win) => {
+    if (!cands.some((w) => w && w.startT === win.startT && w.endT === win.endT)) cands.push(win);
+  };
   const est = planArriveWindow(state, config);
-  if (est) cands.push({ startT: est.startT, endT: est.endT });
+  if (est) {
+    addWindow(est.sampleWindow);
+    addWindow({ startT: est.startT, endT: est.endT });
+  }
   const { out } = passIntervals(sig, sp, state.x, state.t, state.t, state.gait === 'walk' ? sp.baseBpm - sp.c.maxDeltaBpm : state.bpm);
-  for (const w of out) if (w.kind !== 'noMargin') cands.push({ startT: round6(w.lo), endT: round6(w.hi) });
+  for (const w of out) if (w.kind !== 'noMargin') addWindow({ startT: round6(w.lo), endT: round6(w.hi) });
   let best = null;
   for (const win of cands) {
     const cost = tryWindow(state, config, win);
@@ -200,7 +214,7 @@ export function stepRoute(state, config) {
   const n = config.signals.length;
   // 先読み（既定で有効。config.lookahead: false で今の信号だけを見る）
   let plan = state.plan ?? null;
-  if (config.lookahead !== false && i < n - 1 && state.phase === 'approach' && (!plan || plan.signalIndex !== i)) {
+  if (config.control?.enabled !== false && config.lookahead !== false && i < n - 1 && state.phase === 'approach' && (!plan || plan.signalIndex !== i)) {
     plan = { signalIndex: i, window: chooseLegWindow(state, config) };
   }
   const win = plan && plan.signalIndex === i ? plan.window : null;
@@ -223,7 +237,7 @@ function advance(state, config, win) {
   // 着いたとき・入ったときの歩き方（止まった瞬間に core は gait を run に戻すので、動いていた歩き方を使う）
   const movingGait = next.gait === 'walk' || (next.phase === 'waiting' && state.gait === 'walk') ? 'walk' : 'run';
   const ev = (type, t, extra = {}) => events.push({
-    signalId: sig.id, type, t: round6(t), atM: sig.atM, color: signalAt(sig.signal, t).color,
+    signalId: sig.id, type, t, atM: sig.atM, color: signalAt(sig.signal, t).color,
     gait: type === 'waitEnd' || (type === 'crossStart' && extra.afterWait) ? 'run' : movingGait,
     ...(type === 'arrive' ? { passed: extra.passed } : {}),
     ...(type === 'waitEnd' ? { waitS: round6(extra.waitS) } : {}),
@@ -255,7 +269,7 @@ function advance(state, config, win) {
     }
   }
   // 待っていて再開した（再開時刻 = 待ち始め + 増えた停止時間。再開後は通常BPMの走り）
-  // core は青の始まりのごくわずか後（+1e-9）に再開する。丸めた時刻だと境界で「赤」と判定されるので、1e-6 だけ後ろにする
+  // core は青の始まりのごくわずか後（+1e-9）に再開する。停止時間から復元した時刻は境界で「赤」と判定されうるので、1e-6 だけ後ろにする
   if (state.phase === 'waiting' && next.phase !== 'waiting') {
     const resumeT = state.stoppedAtT + (next.stopTimeS - state.stopTimeS) + 1e-6;
     ev('waitEnd', resumeT, { waitS: resumeT - state.stoppedAtT }); ev('crossStart', resumeT, { afterWait: true });
