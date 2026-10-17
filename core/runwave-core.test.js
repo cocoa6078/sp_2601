@@ -56,7 +56,7 @@ test('不正な入力は RangeError（NaN・Infinity・null・周期不整合）
 
 test('不正な control・dt を拒否する', () => {
   for (const bad of [
-    { stepIntervalS: 0 }, { stepIntervalS: 0.05 }, { stepBpm: NaN }, { horizonS: null },
+    { stepIntervalS: 0 }, { stepIntervalS: 0.05 }, { stepBpm: NaN }, { maxDeltaBpm: null },
     { startMarginS: Infinity }, { targetIntervalS: -1 }, { enabled: 'yes' }, { crossingModel: 'zone' },
   ]) assert.throws(() => validateConfig(withControl(SCENARIOS.A, bad)), RangeError, JSON.stringify(bad));
   assert.throws(() => validateConfig({ ...SCENARIOS.A, dt: 0.05 }), RangeError);
@@ -237,7 +237,105 @@ test('step は入力の state を変更しない', () => {
 
 test('chooseTarget: 制御OFFなら常に通常BPM', () => {
   const cfg = withEnabled(SCENARIOS.A, false);
-  assert.deepEqual(chooseTarget(createRun(cfg), cfg), { targetBpm: 150, mode: 'normal' });
+  assert.deepEqual(chooseTarget(createRun(cfg), cfg), { targetBpm: 150, mode: 'normal', reason: 'off' });
+});
+
+// ---------- アルゴリズム修正（v0.3.0）の回帰テスト ----------
+test('横断地点が遠くても、通常で止まらないなら加速しない（予測範囲を距離から決める）', () => {
+  for (const crossingX of [600, 1000, 1500]) {
+    const cfg = { ...SCENARIOS.A, route: { crossingX, goalX: crossingX + 200 } };
+    const { normal, runwave } = compare(cfg);
+    if (normal.stops === 0) assert.equal(runwave.maxBpm, 150, `${crossingX}m`);
+    assert.equal(chooseTarget(createRun(cfg), cfg).mode === 'stopRecommended' && normal.stops === 0, false, `${crossingX}m で誤った停止推奨`);
+  }
+});
+
+test('遠い横断地点でも RUNWAVE の停止が増えない（全位相）', () => {
+  let nStops = 0, rStops = 0;
+  for (let p = 0; p < 120; p += 3) {
+    const cfg = withPhase({ ...SCENARIOS.A, route: { crossingX: 800, goalX: 1000 } }, p);
+    const r = compare(cfg);
+    nStops += r.normal.stops; rStops += r.runwave.stops;
+    assert.ok(r.runwave.stops <= r.normal.stops, `位相${p}`);
+  }
+  assert.ok(rStops < nStops);
+});
+
+test('「停止推奨」は本当に止まるときだけ。余裕は無いが青に着くときは reason=noMargin', () => {
+  const cfg = { ...SCENARIOS.A, signal: { ...SIG, phaseS: 0 }, route: { crossingX: 1, goalX: 10 } };
+  const d = chooseTarget(createRun(cfg), cfg);
+  assert.equal(d.reason, 'noMargin');
+  assert.notEqual(d.mode, 'stopRecommended');
+  assert.equal(simulate(cfg).summary.stops, 0);
+  // 停止推奨のときは、実際に止まる
+  for (let p = 0; p < 120; p += 5) {
+    const c = withPhase(SCENARIOS.A, p);
+    const tr = trace(c);
+    if (tr.some((s) => s.mode === 'stopRecommended')) assert.ok(tr.at(-1).stops > 0, `位相${p}`);
+  }
+});
+
+test('赤の終わりのごく手前を青と判定しない（判定は丸めない）', () => {
+  assert.equal(signalAt(SIG, 119.9999996).color, 'red');
+  assert.equal(canEnter(SIG, 119.9999996), false);
+  assert.equal(signalAt(SIG, 120 - 1e-14).color, 'red');            // 剰余の計算で周期に丸まる値
+  assert.equal(canEnter(SIG, 120 - 1e-14), false);
+  assert.equal(signalAt({ ...SIG, phaseS: -1e-14 }, 0).color, 'red'); // 負の位相
+  assert.equal(signalAt(SIG, 240).color, 'green');
+  assert.equal(signalAt(SIG, 120).color, 'green');
+});
+
+test('ゴール時刻は到達した瞬間（手計算と一致）', () => {
+  const cfg = {
+    signal: { cycleS: 100, greenS: 100, yellowS: 0, redS: 0, phaseS: 0, crossingM: 0 },
+    runner: { strideM: 0.8, baseBpm: 150 }, route: { crossingX: 300, goalX: 600 }, control: { enabled: false },
+  };
+  near(simulate(cfg).summary.totalTimeS, 300, 1e-6);
+  near(simulate({ ...cfg, route: { crossingX: 100, goalX: 201 } }).summary.totalTimeS, 100.5, 1e-6);
+});
+
+test('リズムの指標：通常走行はずれ0、RUNWAVE は止まらずにゴールまで走れる', () => {
+  const { normal, runwave } = compare(SCENARIOS.B);
+  assert.equal(normal.deviationBpmS, 0);
+  assert.equal(normal.offBaseTimeS, 0);
+  near(normal.longestRunS, 200, 0.11);           // スタート→横断地点で停止
+  assert.ok(runwave.deviationBpmS > 0 && runwave.offBaseTimeS > 0);
+  near(runwave.longestRunS, runwave.totalTimeS);  // 一度も止まらない
+});
+
+test('リズムの指標はゴールの瞬間までだけ数える', () => {
+  // B のゴールを 400.01m にすると、最後のステップの途中（161BPM 走行中）でゴールする
+  const cfg = { ...SCENARIOS.B, route: { crossingX: 400, goalX: 400.01 } };
+  const tr = trace(cfg);
+  const last = tr.at(-1);
+  // 各ステップの実際の走行時間（最後だけはゴールの瞬間まで）× そのステップの BPM のずれ
+  let dev = 0, off = 0;
+  for (let i = 1; i < tr.length; i++) {
+    const dur = i === tr.length - 1 ? last.finishTimeS - tr[i - 1].t : 0.1;
+    const d = Math.abs(tr[i].bpm - 150);
+    dev += d * dur;
+    if (d > 0) off += dur;
+  }
+  assert.ok(last.finishTimeS - tr.at(-2).t < 0.1 - 1e-6, 'ステップの途中でゴールする条件になっていない');
+  near(last.deviationBpmS, dev, 1e-6);
+  near(last.offBaseTimeS, off, 1e-6);
+});
+
+test('走っている間も longestRunS が更新される', () => {
+  let s = createRun(SCENARIOS.B);
+  for (let i = 0; i < 100; i++) s = step(s, SCENARIOS.B);
+  near(s.longestRunS, 10, 1e-6);
+});
+
+test('reason は今の phase と合う（待機中 waiting、通過後 passed、制御OFFは常に off）', () => {
+  const off = withEnabled(SCENARIOS.B, false);
+  for (const s of trace(off)) assert.equal(s.reason, 'off');
+  const on = trace(withEnabled(withModel(SCENARIOS.B, 'length'), true));  // RUNWAVE でも止まる条件
+  for (const s of on.slice(1)) {
+    if (s.phase === 'waiting') assert.equal(s.reason, 'waiting');
+    else if (s.phase !== 'approach') assert.equal(s.reason, 'passed');
+  }
+  assert.ok(on.some((s) => s.reason === 'unavoidable'));
 });
 
 // ---------- 比較シナリオ（v4 5章、point モデル） ----------
