@@ -107,6 +107,8 @@ protocol WatchLink: AnyObject {
     var onOutputError: ((String) -> Void)? { get set }
     func updateOutputSettings(_ settings: TempoOutputSettings)
     func previewOutput(targetCadence: Int, activityMode: ActivityMode)
+    func updateNavigation(_ guidance: WatchRouteGuidance)
+    func updateWorkoutClock(_ snapshot: WorkoutClockSnapshot)
 
     /// 目標コマンドを Watch へ送る
     func send(_ command: TargetCommand)
@@ -132,6 +134,8 @@ final class NoWatchLink: WatchLink {
     var onOutputError: ((String) -> Void)?
     func updateOutputSettings(_ settings: TempoOutputSettings) {}
     func previewOutput(targetCadence: Int, activityMode: ActivityMode) {}
+    func updateNavigation(_ guidance: WatchRouteGuidance) {}
+    func updateWorkoutClock(_ snapshot: WorkoutClockSnapshot) {}
 
     func send(_ command: TargetCommand) {}
     func workoutDidStart(sessionID: UUID, activityMode: ActivityMode) {}
@@ -258,6 +262,10 @@ final class SessionStore: ObservableObject {
     private let goalSpeechSynthesizer = AVSpeechSynthesizer()
     private let goalAudioSession = AVAudioSession.sharedInstance()
     private var goalApproachPresentedThisSession = false
+    private var navigationSubscription: AnyCancellable?
+    private var clockSubscription: AnyCancellable?
+    private var lastNavigationSentAt = Date.distantPast
+    private var lastNavigationFingerprint = ""
 
     // MARK: 経過時間（iPhone の時計で積算。一時停止中は増えない）
     private var accumulated: TimeInterval = 0
@@ -321,6 +329,54 @@ final class SessionStore: ObservableObject {
             DispatchQueue.main.async { self?.outputSyncMessage = message }
         }
         link.updateOutputSettings(outputSettings)
+        navigationSubscription = navigation.objectWillChange
+            .debounce(for: .milliseconds(100), scheduler: RunLoop.main)
+            .sink { [weak self] _ in self?.sendNavigationGuidance() }
+        clockSubscription = Timer.publish(every: 5, on: .main, in: .common)
+            .autoconnect().sink { [weak self] _ in
+                guard let self, self.workoutState == .running || self.workoutState == .paused else { return }
+                self.sendWorkoutClock()
+            }
+    }
+
+    private func sendWorkoutClock() {
+        guard workoutState != .idle else { return }
+        let state: String
+        switch workoutState {
+        case .running: state = showGoalApproach ? "goalReached" : "running"
+        case .paused: state = "paused"
+        case .ended: state = "ended"
+        case .idle: return
+        }
+        link.updateWorkoutClock(WorkoutClockSnapshot(
+            sessionID: sessionID.uuidString, state: state, activityMode: activityMode.rawValue,
+            accumulated: accumulated, startedAt: runStartedAt?.timeIntervalSince1970,
+            issuedAt: Date().timeIntervalSince1970
+        ))
+    }
+
+    private func sendNavigationGuidance(force: Bool = false) {
+        guard workoutState == .running || workoutState == .paused else { return }
+        let symbol = navigation.instructionSymbol
+        let title: String
+        if navigation.isRecalculating { title = "経路を再検索中" }
+        else if navigation.isOffRoute { title = "経路を確認" }
+        else if symbol == "arrow.turn.up.right" { title = "右方向です" }
+        else if symbol == "arrow.turn.up.left" { title = "左方向です" }
+        else if symbol == "flag.checkered" { title = "ゴールへ" }
+        else { title = "道なりに進む" }
+        let next = navigation.distanceToManeuver.map { ($0 / 5).rounded() * 5 }
+        let remaining = navigation.remainingDistance.map { ($0 / 10).rounded() * 10 }
+        let fingerprint = "\(sessionID):\(title):\(next ?? -1):\(remaining ?? -1)"
+        guard force || fingerprint != lastNavigationFingerprint || Date().timeIntervalSince(lastNavigationSentAt) >= 5 else { return }
+        lastNavigationFingerprint = fingerprint
+        lastNavigationSentAt = Date()
+        link.updateNavigation(WatchRouteGuidance(
+            sessionID: sessionID.uuidString, instruction: title, symbol: symbol,
+            maneuverDistance: next, remainingDistance: remaining,
+            issuedAt: Date().timeIntervalSince1970, isOffRoute: navigation.isOffRoute,
+            isRecalculating: navigation.isRecalculating
+        ))
     }
 
     // MARK: 経過時間
@@ -521,6 +577,8 @@ final class SessionStore: ObservableObject {
         link.updateOutputSettings(outputSettings)
         sendCurrentTarget()
         link.workoutDidStart(sessionID: sessionID, activityMode: activityMode)
+        sendWorkoutClock()
+        sendNavigationGuidance(force: true)
     }
 
     private func normalizedCadence(_ value: Int) -> Int {
@@ -536,6 +594,7 @@ final class SessionStore: ObservableObject {
         routeTracker.pause()
         navigation.pause()
         link.workoutDidPause()
+        sendWorkoutClock()
     }
 
     func resume() {
@@ -546,6 +605,7 @@ final class SessionStore: ObservableObject {
         routeTracker.resume()
         navigation.resume()
         link.workoutDidResume()
+        sendWorkoutClock()
     }
 
     func end() {
@@ -571,6 +631,7 @@ final class SessionStore: ObservableObject {
         WorkoutRecord.save(workoutRecords)
         screen = .result
         showGoalApproach = false
+        sendWorkoutClock()
         link.workoutDidEnd(
             elapsed: summary?.elapsed ?? accumulated,
             distance: summary?.distance,
@@ -590,6 +651,7 @@ final class SessionStore: ObservableObject {
         goalApproachPresentedThisSession = true
         goalApproachDistanceM = max(0, distance)
         showGoalApproach = true
+        sendWorkoutClock()
         link.workoutDidReachGoal(distanceToGoal: goalApproachDistanceM)
         announceGoal()
     }
@@ -598,6 +660,7 @@ final class SessionStore: ObservableObject {
         guard showGoalApproach else { return }
         showGoalApproach = false
         if workoutState == .running {
+            sendWorkoutClock()
             navigation.resume()
             link.workoutDidContinueAfterGoal()
         }
@@ -676,6 +739,8 @@ final class SessionStore: ObservableObject {
         // セッション中に再接続したら、現在の目標を送り直す
         if state == .connected, workoutState == .running || workoutState == .paused {
             sendCurrentTarget()
+            sendNavigationGuidance(force: true)
+            sendWorkoutClock()
         }
     }
 
@@ -1410,23 +1475,24 @@ private struct SessionView: View {
                 .padding(16)
                 .background(CardBackground())
 
+                NavigationInstructionCard(navigation: navigation)
+                WorkoutRouteMap(route: routeTracker.route, goal: store.goal, plannedRoute: navigation.selectedRoute)
+                    .frame(height: 210)
+
                 // 心拍数はWatchのHealthKitワークアウトで取得する。
                 MetricCard(
                     title: "心拍数",
                     display: store.metricDisplay(store.latestMetrics?.heartRate, unit: "拍/分")
                 )
 
-                // 信号のイラスト（受け取った値を描くだけ）
+                /* 信号連携を再開するときは、このブロックのコメントを外す。
                 VStack(alignment: .leading, spacing: 12) {
                     SignalLightView(signal: store.latestSignal)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(16)
                 .background(CardBackground())
-
-                NavigationInstructionCard(navigation: navigation)
-                WorkoutRouteMap(route: routeTracker.route, goal: store.goal, plannedRoute: navigation.selectedRoute)
-                    .frame(height: 210)
+                */
                 HStack {
                     Label("距離", systemImage: "figure.run")
                         .foregroundStyle(.secondary)
@@ -1470,7 +1536,7 @@ private struct SessionView: View {
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                         // 毎秒再描画。一時停止中は elapsed(at:) が増えない。
-                        TimelineView(.periodic(from: Date(), by: 1.0)) { context in
+                        TimelineView(.periodic(from: Date(timeIntervalSince1970: 0), by: 1.0)) { context in
                             Text(formatElapsed(store.elapsed(at: context.date)))
                                 .font(.system(size: 34, weight: .bold, design: .rounded))
                                 .monospacedDigit()

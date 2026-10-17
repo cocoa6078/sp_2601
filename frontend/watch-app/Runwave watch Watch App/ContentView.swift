@@ -37,6 +37,8 @@ struct ContentView: View {
                 isPaused = false
                 isTempoActive = true
             case .paused:
+                previewID = nil
+                isTempoActive = true
                 isPaused = true
             case .goalReached:
                 previewID = nil
@@ -124,22 +126,23 @@ struct ContentView: View {
     }
 
     private var workoutView: some View {
-        VStack(spacing: 2) {
-            VStack(spacing: 0) {
-                Text("\(connectivity.targetCadence)")
-                    .font(.system(size: 29, weight: .bold, design: .rounded))
-                    .foregroundStyle(connectivity.guidedCadence == connectivity.targetCadence ? .white : .gray)
-                    .contentTransition(.numericText())
-                    .accessibilityLabel("基準目標 \(connectivity.targetCadence) 歩/分")
-
-                HStack(alignment: .firstTextBaseline, spacing: 3) {
+        VStack(spacing: 3) {
+            if previewID == nil { routeGuidanceCard }
+            HStack(alignment: .bottom, spacing: 12) {
+                VStack(spacing: 0) {
+                    Text("目標").font(.system(size: 8)).foregroundStyle(.secondary)
+                    Text("\(connectivity.targetCadence)")
+                        .font(.system(size: 26, weight: .bold, design: .rounded))
+                        .foregroundStyle(connectivity.guidedCadence == connectivity.targetCadence ? .white : .gray)
+                        .contentTransition(.numericText())
+                        .accessibilityLabel("基準目標 \(connectivity.targetCadence) 歩/分")
+                }
+                VStack(spacing: 0) {
+                    Text("案内・歩/分").font(.system(size: 8)).foregroundStyle(.secondary)
                     Text("\(connectivity.guidedCadence)")
-                        .font(.system(size: 24, weight: .semibold, design: .rounded))
+                        .font(.system(size: 23, weight: .semibold, design: .rounded))
                         .foregroundStyle(connectivity.guidedCadence == connectivity.targetCadence ? .gray : .cyan)
                         .contentTransition(.numericText())
-                    Text("歩/分")
-                        .font(.caption2)
-                        .foregroundStyle(connectivity.guidedCadence == connectivity.targetCadence ? .gray : .cyan)
                 }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("現在の案内 \(connectivity.guidedCadence) 歩/分")
@@ -156,10 +159,14 @@ struct ContentView: View {
             )
 
             if connectivity.sessionState == .running || connectivity.sessionState == .paused {
-                TimelineView(.periodic(from: Date(), by: 1)) { context in
-                    Text(formatDuration(connectivity.elapsed(at: context.date)))
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                TimelineView(.periodic(from: Date(timeIntervalSince1970: 0), by: 1)) { context in
+                    HStack {
+                        Text(remainingRouteLabel)
+                        Spacer(minLength: 4)
+                        Text(formatDuration(connectivity.elapsed(at: context.date)))
+                    }
+                    .font(.system(size: 10, weight: .medium).monospacedDigit())
+                    .foregroundStyle(.secondary)
                 }
             }
 
@@ -167,9 +174,10 @@ struct ContentView: View {
                 Text(message)
                     .font(.system(size: 9))
                     .foregroundStyle(.orange)
-                    .lineLimit(2)
+                    .lineLimit(1)
                     .minimumScaleFactor(0.8)
-            } else if !connectivity.crownSyncStatus.isEmpty {
+            } else if !connectivity.crownSyncStatus.isEmpty,
+                      connectivity.crownSyncStatus != "iPhone同期済み" {
                 Text(connectivity.crownSyncStatus)
                     .font(.system(size: 9))
                     .foregroundStyle(connectivity.crownSyncStatus == "iPhone同期済み" ? .green : .secondary)
@@ -186,7 +194,7 @@ struct ContentView: View {
                     }
                 } label: {
                     Image(systemName: isPaused ? "play.fill" : "pause.fill")
-                        .frame(maxWidth: .infinity, minHeight: 26)
+                        .frame(maxWidth: .infinity, minHeight: 22)
                 }
                 .tint(isPaused ? .green : .orange)
                 .controlSize(.small)
@@ -202,7 +210,7 @@ struct ContentView: View {
                     }
                 } label: {
                     Image(systemName: "stop.fill")
-                        .frame(maxWidth: .infinity, minHeight: 26)
+                        .frame(maxWidth: .infinity, minHeight: 22)
                 }
                 .accessibilityLabel("ワークアウト終了")
             }
@@ -218,6 +226,48 @@ struct ContentView: View {
         }
     }
 
+    private var remainingRouteLabel: String {
+        guard let distance = connectivity.routeGuidance?.remainingDistance else { return "残り -- km" }
+        return String(format: "残り %.2f km", distance / 1000)
+    }
+
+    private var routeGuidanceCard: some View {
+        TimelineView(.periodic(from: Date(), by: 5)) { context in
+            let guidance = connectivity.routeGuidance
+            let stale = guidance.map {
+                !isPaused && context.date.timeIntervalSince1970 - $0.issuedAt > 30
+            } ?? false
+            let warning = stale || guidance?.isOffRoute == true || guidance?.isRecalculating == true
+            HStack(spacing: 7) {
+                Image(systemName: stale ? "clock.arrow.circlepath" : (guidance?.symbol ?? "location"))
+                    .font(.system(size: 25, weight: .bold))
+                    .frame(width: 30)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(stale ? "位置更新待ち" : (guidance?.instruction ?? "経路を確認中"))
+                        .font(.system(size: 13, weight: .bold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                    if stale {
+                        Text("iPhoneの接続を確認").font(.system(size: 9))
+                    } else if let distance = guidance?.maneuverDistance {
+                        Text(distance < 5 ? "まもなく" : "約\(Int(distance.rounded()))m先")
+                            .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                    } else {
+                        Text(guidance?.isOffRoute == true ? "iPhoneで経路を確認" : "iPhoneから位置情報を取得")
+                            .font(.system(size: 9))
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(warning ? Color.orange : Color.cyan)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 5)
+            .frame(maxWidth: .infinity)
+            .background((warning ? Color.orange : Color.cyan).opacity(0.13), in: RoundedRectangle(cornerRadius: 10))
+            .accessibilityElement(children: .combine)
+        }
+    }
+
     private var workoutSummaryView: some View {
         VStack(spacing: 5) {
             Text(connectivity.activityMode == "walking" ? "ウォーキング終了" : "ランニング終了")
@@ -225,7 +275,7 @@ struct ContentView: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
 
-            TimelineView(.periodic(from: Date(), by: 1)) { context in
+            TimelineView(.periodic(from: Date(timeIntervalSince1970: 0), by: 1)) { context in
                 Text(formatDuration(connectivity.elapsed(at: context.date)))
                     .font(.system(size: 25, weight: .bold, design: .rounded))
                     .monospacedDigit()

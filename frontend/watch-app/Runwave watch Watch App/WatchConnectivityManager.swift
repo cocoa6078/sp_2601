@@ -23,6 +23,10 @@ final class WatchConnectivityManager: NSObject, ObservableObject, WCSessionDeleg
     @Published private(set) var sessionStatus = "iPhone未接続"
     @Published private(set) var outputSettings = TempoOutputSettings.load()
     @Published private(set) var previewRequestID: UUID?
+    @Published private(set) var routeGuidance: WatchRouteGuidance?
+    private var currentSessionID: String?
+    private var lastClockIssuedAt: TimeInterval = 0
+    private var pendingControlIssuedAt: TimeInterval = 0
 
     private let session: WCSession
     private var outputRevision = UserDefaults.standard.double(forKey: "runwave.receivedOutputRevision")
@@ -56,7 +60,21 @@ final class WatchConnectivityManager: NSObject, ObservableObject, WCSessionDeleg
         guard let type = payload["type"] as? String else { return }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            defer {
+                if let clock = payload["workoutClock"] as? [String: Any] {
+                    self.receiveWorkoutClock(clock)
+                }
+                if let guidance = payload["navigationGuidance"] as? [String: Any] {
+                    self.receiveNavigation(guidance)
+                }
+            }
+            if ["workoutStart", "workoutPause", "workoutResume", "workoutEnd"].contains(type),
+               let issuedAt = payload["issuedAt"] as? Double, issuedAt <= self.lastClockIssuedAt { return }
             switch type {
+            case "workoutClock":
+                self.receiveWorkoutClock(payload)
+            case "navigation":
+                self.receiveNavigation(payload)
             case "outputSettings", "outputPreview":
                 guard let settings = TempoOutputSettings(payload: payload),
                       let revision = payload["revision"] as? Double,
@@ -79,6 +97,7 @@ final class WatchConnectivityManager: NSObject, ObservableObject, WCSessionDeleg
                     self.previewRequestID = UUID()
                 }
             case "target":
+                if self.currentSessionID == nil { self.currentSessionID = payload["sessionID"] as? String }
                 if let value = payload["targetCadence"] as? Int {
                     if let issuedAt = payload["issuedAt"] as? Double {
                         // WCSession may deliver an older queued snapshot after a newer live update.
@@ -94,6 +113,8 @@ final class WatchConnectivityManager: NSObject, ObservableObject, WCSessionDeleg
                     self.cadenceAdjustment = payload["cadenceAdjustment"] as? Int ?? (value - self.cadenceBaseline)
                 }
             case "workoutStart":
+                self.currentSessionID = payload["sessionID"] as? String
+                self.routeGuidance = nil
                 self.accumulatedWorkoutTime = 0
                 self.workoutStartedAt = Date()
                 self.workoutDistance = nil
@@ -125,6 +146,7 @@ final class WatchConnectivityManager: NSObject, ObservableObject, WCSessionDeleg
                 self.sessionStatus = "セッション実行中"
                 self.sessionState = .running
             case "workoutEnd":
+                self.routeGuidance = nil
                 self.freezeWorkoutClock()
                 self.heartRateWorkout.stop()
                 if let elapsed = payload["elapsed"] as? Double { self.accumulatedWorkoutTime = elapsed }
@@ -136,6 +158,55 @@ final class WatchConnectivityManager: NSObject, ObservableObject, WCSessionDeleg
             default: break
             }
         }
+    }
+
+    private func receiveWorkoutClock(_ payload: [String: Any]) {
+        guard let clock = WorkoutClockSnapshot(payload: payload),
+              clock.issuedAt > lastClockIssuedAt,
+              clock.issuedAt >= pendingControlIssuedAt else { return }
+        let newSession = currentSessionID != clock.sessionID || sessionState == .idle
+        let previousState = sessionState
+        lastClockIssuedAt = clock.issuedAt
+        pendingControlIssuedAt = 0
+        currentSessionID = clock.sessionID
+        accumulatedWorkoutTime = clock.accumulated
+        workoutStartedAt = clock.startedAt.map { Date(timeIntervalSince1970: $0) }
+        activityMode = clock.activityMode
+        if newSession {
+            routeGuidance = nil
+            workoutDistance = nil
+            workoutAverageCadence = nil
+            heartRate = nil
+        }
+        switch clock.state {
+        case "running": sessionState = .running; sessionStatus = "セッション実行中"
+        case "paused": sessionState = .paused; sessionStatus = "一時停止中"
+        case "goalReached": sessionState = .goalReached; sessionStatus = "ゴール"
+        case "ended": sessionState = .ended; sessionStatus = "セッション終了"; routeGuidance = nil
+        default: return
+        }
+        if clock.state == "ended" {
+            heartRateWorkout.stop()
+        } else if newSession {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                await self.heartRateWorkout.start(activityMode: clock.activityMode)
+                if self.sessionState == .paused { self.heartRateWorkout.pause() }
+            }
+        } else if sessionState == .paused, previousState != .paused {
+            heartRateWorkout.pause()
+        } else if sessionState == .running, previousState == .paused {
+            heartRateWorkout.resume()
+        }
+    }
+
+    private func receiveNavigation(_ payload: [String: Any]) {
+        guard let guidance = WatchRouteGuidance(payload: payload),
+              guidance.sessionID == currentSessionID,
+              (Date().timeIntervalSince1970 - guidance.issuedAt < 45),
+              (guidance.issuedAt > (routeGuidance?.issuedAt ?? 0)),
+              sessionState != .ended else { return }
+        routeGuidance = guidance
     }
 
     private static func normalizedCadence(_ value: Int, mode: String) -> Int {
@@ -175,6 +246,8 @@ final class WatchConnectivityManager: NSObject, ObservableObject, WCSessionDeleg
     func endWorkout() {
         guard sessionState == .running || sessionState == .paused else { return }
         freezeWorkoutClock()
+        pendingControlIssuedAt = Date().timeIntervalSince1970
+        heartRateWorkout.stop()
         sessionStatus = "セッション終了"
         sessionState = .ended
         var payload: [String: Any] = [
@@ -199,16 +272,21 @@ final class WatchConnectivityManager: NSObject, ObservableObject, WCSessionDeleg
     func toggleWorkoutPause() {
         let action: String
         if sessionState == .running {
+            freezeWorkoutClock()
+            heartRateWorkout.pause()
             action = "pause"
             sessionState = .paused
             sessionStatus = "一時停止中"
         } else if sessionState == .paused {
+            workoutStartedAt = Date()
+            heartRateWorkout.resume()
             action = "resume"
             sessionState = .running
             sessionStatus = "セッション実行中"
         } else {
             return
         }
+        pendingControlIssuedAt = Date().timeIntervalSince1970
         sendToPhone(["type": action == "pause" ? "workoutPause" : "workoutResume"])
     }
 

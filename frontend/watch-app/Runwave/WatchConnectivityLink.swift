@@ -15,6 +15,8 @@ final class WatchConnectivityLink: NSObject, WatchLink, WCSessionDelegate {
     private var outputSettings = TempoOutputSettings.load()
     private var outputRevision = UserDefaults.standard.double(forKey: "runwave.outputRevision")
     private var pendingPayloads: [[String: Any]] = []
+    private var latestNavigationPayload: [String: Any]?
+    private var latestClockPayload: [String: Any]?
     private var lastCrownSessionStartedAt = UserDefaults.standard.double(forKey: "runwave.lastCrownSessionStartedAt")
     private var lastCrownSessionID = UserDefaults.standard.string(forKey: "runwave.lastCrownSessionID") ?? ""
     private var lastCrownSequence = UserDefaults.standard.integer(forKey: "runwave.lastCrownSequence")
@@ -57,6 +59,34 @@ final class WatchConnectivityLink: NSObject, WatchLink, WCSessionDelegate {
     func workoutDidStart(sessionID: UUID, activityMode: ActivityMode) {
         send([Key.type: "workoutStart", Key.sessionID: sessionID.uuidString, "activityMode": activityMode.rawValue])
     }
+
+    func updateNavigation(_ guidance: WatchRouteGuidance) {
+        latestNavigationPayload = guidance.payload
+        guard session.activationState == .activated else { return }
+        try? updateSnapshot([:])
+        if session.isReachable {
+            // 経路案内は最新版だけを使う。過去の曲がり角をキューへ積まない。
+            session.sendMessage(guidance.payload, replyHandler: nil, errorHandler: nil)
+        }
+    }
+
+    func updateWorkoutClock(_ snapshot: WorkoutClockSnapshot) {
+        latestClockPayload = snapshot.payload
+        guard session.activationState == .activated else { return }
+        try? updateSnapshot([:])
+        if session.isReachable {
+            session.sendMessage(snapshot.payload, replyHandler: nil, errorHandler: nil)
+        }
+    }
+
+    private func updateSnapshot(_ payload: [String: Any]) throws {
+        var snapshot = session.applicationContext
+        snapshot.merge(payload) { _, new in new }
+        if snapshot[Key.type] == nil { snapshot[Key.type] = "navigationSnapshot" }
+        if let latestNavigationPayload { snapshot["navigationGuidance"] = latestNavigationPayload }
+        if let latestClockPayload { snapshot["workoutClock"] = latestClockPayload }
+        try session.updateApplicationContext(snapshot)
+    }
     func workoutDidPause() { send([Key.type: "workoutPause"]) }
     func workoutDidResume() { send([Key.type: "workoutResume"]) }
     func workoutDidReachGoal(distanceToGoal: Double) {
@@ -91,7 +121,7 @@ final class WatchConnectivityLink: NSObject, WatchLink, WCSessionDelegate {
         guard session.activationState == .activated else { return }
         do {
             // Keep just the newest settings when the Watch is temporarily unavailable.
-            try session.updateApplicationContext(outputPayload)
+            try updateSnapshot(outputPayload)
         } catch {
             DispatchQueue.main.async { [weak self] in self?.onOutputError?("Watchへの設定保存に失敗しました") }
         }
@@ -116,7 +146,9 @@ final class WatchConnectivityLink: NSObject, WatchLink, WCSessionDelegate {
         }
     }
 
-    private func send(_ payload: [String: Any]) {
+    private func send(_ originalPayload: [String: Any]) {
+        var payload = originalPayload
+        if payload[Key.issuedAt] == nil { payload[Key.issuedAt] = Date().timeIntervalSince1970 }
         guard WCSession.isSupported() else { return }
         guard session.activationState == .activated else {
             pendingPayloads.append(payload)
@@ -125,7 +157,7 @@ final class WatchConnectivityLink: NSObject, WatchLink, WCSessionDelegate {
         // Retain the newest cadence as a state snapshot so it is available after reconnection.
         if payload[Key.type] as? String == "target" {
             do {
-                try session.updateApplicationContext(payload)
+                try updateSnapshot(payload)
             } catch {
                 DispatchQueue.main.async { [weak self] in
                     self?.onOutputError?("Watchへ目標ケイデンスを保存できませんでした")
