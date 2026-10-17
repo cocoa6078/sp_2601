@@ -9,6 +9,25 @@ app.use(cors());
 app.use(express.json());
 
 // ---------------------------------------------------------
+// 0. ファイルパスおよびストレージの初期設定
+// ---------------------------------------------------------
+const logsFilePath = path.join(__dirname, 'logs.json');
+
+let userCalibrationData = { 歩幅: 0.8, 通常BPM: 150 };
+let runLogs = [];
+
+// サーバー起動時にログファイル（logs.json）を読み込む
+try {
+  if (fs.existsSync(logsFilePath)) {
+    const fileData = fs.readFileSync(logsFilePath, 'utf-8');
+    runLogs = JSON.parse(fileData);
+    console.log(`📂 既存のログファイルから ${runLogs.length} 件のログを読み込みました。`);
+  }
+} catch (error) {
+  console.error("❌ ログファイルの読み込みに失敗しました:", error.message);
+}
+
+// ---------------------------------------------------------
 // 1. データストア (全データおよびデモ用抽出データの準備)
 // ---------------------------------------------------------
 let signalsData = [];
@@ -53,12 +72,14 @@ try {
   const orderMap = { 3: 1, 8: 2, 2: 3, 1: 4, 5: 5 };
   filteredData.sort((a, b) => orderMap[a["交差点番号"]] - orderMap[b["交差点番号"]]);
 
-  // デモ用配列の生成
-  signalsData = filteredData.map(signal => {
-    const greenS = Math.max(0, signal["青信号時間"] - 5); 
+  // デモ用配列の生成（動的位相計算版）
+  signalsData = filteredData.map((signal, index) => {
+    const greenS = Math.max(0, signal["青信号時間"] - 5);
     const yellowS = 5;
     const redS = signal["赤信号時間"];
-    const cycleS = greenS + yellowS + redS; 
+    const cycleS = greenS + yellowS + redS;
+
+    const dynamicPhaseS = index * 15;
 
     return {
       signalId: `sapporo_${signal["交差点番号"]}`,
@@ -66,19 +87,15 @@ try {
       greenS: greenS,
       yellowS: yellowS,
       redS: redS,
-      phaseS: 0,         
-      crossingM: 15.0,   
-      note: "※JARTIC由来の参考プリセット（車両用データ流用）" // ← 「車両用データ流用」を復元
+      phaseS: dynamicPhaseS,
+      crossingM: 15.0,
+      note: "※JARTIC由来の参考プリセット（車両用データ流用・位相自動計算版）"
     };
   });
   console.log(`✅ デモ用データ準備完了: ${signalsData.length} 件抽出`);
 } catch (error) {
   console.error("❌ データの読み込みに失敗しました:", error.message);
 }
-
-// キャリブレーションとログのインメモリ保存用変数
-let userCalibrationData = { 歩幅: 0.8, 通常BPM: 150 };
-let runLogs = [];
 
 // ---------------------------------------------------------
 // 2. API エンドポイント
@@ -114,7 +131,6 @@ app.post('/api/calibration', (req, res) => {
   const body = req.body ?? {};
   const { 歩幅, 通常BPM } = body;
   
-  // バリデーションチェック
   if (typeof 歩幅 !== 'number' || 歩幅 <= 0 || typeof 通常BPM !== 'number' || 通常BPM <= 0) {
     return res.status(400).json({ ステータス: "エラー", メッセージ: "正の数値を入力してください" });
   }
@@ -130,12 +146,25 @@ app.get('/api/calibration', (req, res) => {
 // [POST] 走行ログの保存
 app.post('/api/logs', (req, res) => {
   const logData = req.body ?? {};
-  // 空リクエストの除外
+  
   if (Object.keys(logData).length === 0) {
     return res.status(400).json({ ステータス: "エラー", メッセージ: "データが空です" });
   }
-  runLogs.push({ 時刻: new Date().toISOString(), ...logData });
-  res.status(201).json({ ステータス: "成功", 総ログ数: runLogs.length });
+
+  const newLog = { 時刻: new Date().toISOString(), ...logData };
+  runLogs.push(newLog);
+
+  // ログファイルへの永続保存
+  try {
+    fs.writeFileSync(logsFilePath, JSON.stringify(runLogs, null, 2), 'utf-8');
+  } catch (error) {
+    console.error("❌ ログのファイル保存に失敗しました:", error.message);
+  }
+
+  res.status(201).json({
+    ステータス: "成功",
+    総ログ数: runLogs.length
+  });
 });
 
 // [GET] 走行ログ一覧の取得
