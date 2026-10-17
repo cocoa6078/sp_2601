@@ -27,7 +27,10 @@ function calculateDistanceM(lat1, lon1, lat2, lon2) {
 // ---------------------------------------------------------
 // 0. ファイルパスおよびストレージの初期設定
 // ---------------------------------------------------------
-const logsFilePath = path.join(__dirname, 'logs.json');
+const isVercel = process.env.VERCEL === '1';
+const logsFilePath = isVercel 
+  ? path.join('/tmp', 'logs.json') 
+  : path.join(__dirname, 'logs.json');
 
 // キャリブレーション設定データの初期値（通常BPMキー統一、早歩き歩幅を追加）
 let userCalibrationData = { 
