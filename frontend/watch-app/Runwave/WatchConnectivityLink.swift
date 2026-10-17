@@ -7,6 +7,12 @@ final class WatchConnectivityLink: NSObject, WatchLink, WCSessionDelegate {
     private(set) var connectionState: WatchConnectionState = .notConnected
     var onMetrics: ((WatchMetrics) -> Void)?
     var onConnectionChange: ((WatchConnectionState) -> Void)?
+    var onGoalSetupRequested: ((String?) -> Void)?
+    var onOutputSettingsApplied: ((TempoOutputSettings) -> Void)?
+    var onOutputError: ((String) -> Void)?
+    private var outputSettings = TempoOutputSettings.load()
+    private var outputRevision = UserDefaults.standard.double(forKey: "runwave.outputRevision")
+    private var pendingPayloads: [[String: Any]] = []
 
     private enum Key {
         static let type = "type"
@@ -43,8 +49,62 @@ final class WatchConnectivityLink: NSObject, WatchLink, WCSessionDelegate {
     func workoutDidResume() { send([Key.type: "workoutResume"]) }
     func workoutDidEnd() { send([Key.type: "workoutEnd"]) }
 
+    func updateOutputSettings(_ settings: TempoOutputSettings) {
+        if settings != outputSettings || outputRevision == 0 {
+            outputSettings = settings
+            outputRevision = max(Date().timeIntervalSince1970, outputRevision + 0.001)
+            UserDefaults.standard.set(outputRevision, forKey: "runwave.outputRevision")
+        }
+        pushOutputSettings()
+    }
+
+    private var outputPayload: [String: Any] {
+        outputSettings.payload.merging([Key.type: "outputSettings", "revision": outputRevision]) { _, new in new }
+    }
+
+    private func pushOutputSettings() {
+        guard session.activationState == .activated else { return }
+        do {
+            // Keep just the newest settings when the Watch is temporarily unavailable.
+            try session.updateApplicationContext(outputPayload)
+        } catch {
+            DispatchQueue.main.async { [weak self] in self?.onOutputError?("Watchへの設定保存に失敗しました") }
+        }
+        if session.isReachable {
+            session.sendMessage(outputPayload, replyHandler: nil) { _ in
+                // The application context remains queued for the next connection.
+            }
+        }
+    }
+
+    func previewOutput(targetCadence: Int) {
+        guard session.activationState == .activated, session.isReachable else { return }
+        let payload = outputPayload.merging([
+            Key.type: "outputPreview", "requestedAt": Date().timeIntervalSince1970,
+            Key.target: min(max(targetCadence, 120), 190)
+        ]) { _, new in new }
+        // A preview is never queued: it must not unexpectedly play after a later reconnect.
+        session.sendMessage(payload, replyHandler: nil) { [weak self] _ in
+            DispatchQueue.main.async { self?.onOutputError?("Watchを開いて、もう一度お試しください") }
+        }
+    }
+
     private func send(_ payload: [String: Any]) {
-        guard WCSession.isSupported(), session.activationState == .activated else { return }
+        guard WCSession.isSupported() else { return }
+        guard session.activationState == .activated else {
+            pendingPayloads.append(payload)
+            return
+        }
+        // Retain the newest cadence as a state snapshot so it is available after reconnection.
+        if payload[Key.type] as? String == "target" {
+            do {
+                try session.updateApplicationContext(payload)
+            } catch {
+                DispatchQueue.main.async { [weak self] in
+                    self?.onOutputError?("Watchへ目標ケイデンスを保存できませんでした")
+                }
+            }
+        }
         if session.isReachable {
             session.sendMessage(payload, replyHandler: nil) { [weak self] _ in
                 self?.session.transferUserInfo(payload)
@@ -55,14 +115,42 @@ final class WatchConnectivityLink: NSObject, WatchLink, WCSessionDelegate {
     }
 
     private func refreshConnectionState() {
-        let next: WatchConnectionState = session.activationState == .activated && session.isReachable
-            ? .connected : .notConnected
+        let next: WatchConnectionState
+        if session.activationState != .activated {
+            next = .notConnected
+        } else if !session.isPaired {
+            next = .notPaired
+        } else if !session.isWatchAppInstalled {
+            next = .watchAppNotInstalled
+        } else if session.isReachable {
+            next = .connected
+        } else {
+            next = .waitingForReachability
+        }
         guard next != connectionState else { return }
         connectionState = next
         DispatchQueue.main.async { [weak self] in self?.onConnectionChange?(next) }
     }
 
     private func receive(_ message: [String: Any]) {
+        if message[Key.type] as? String == "goalSetupRequest" {
+            let mode = message["activityMode"] as? String
+            DispatchQueue.main.async { [weak self] in self?.onGoalSetupRequested?(mode) }
+            return
+        }
+        if message[Key.type] as? String == "outputSettingsApplied",
+           let settings = TempoOutputSettings(payload: message),
+           message["revision"] as? Double == outputRevision,
+           settings == outputSettings {
+            DispatchQueue.main.async { [weak self] in self?.onOutputSettingsApplied?(settings) }
+            return
+        }
+        if message[Key.type] as? String == "outputError",
+           message["revision"] as? Double == outputRevision,
+           let text = message["message"] as? String {
+            DispatchQueue.main.async { [weak self] in self?.onOutputError?(text) }
+            return
+        }
         guard message[Key.type] as? String == "metrics" else { return }
         let metrics = WatchMetrics(
             currentCadence: message["currentCadence"] as? Int,
@@ -75,10 +163,17 @@ final class WatchConnectivityLink: NSObject, WatchLink, WCSessionDelegate {
     }
 
     func session(_ session: WCSession, activationDidCompleteWith state: WCSessionActivationState, error: Error?) {
+        let queued = pendingPayloads
+        pendingPayloads.removeAll()
+        queued.forEach(send)
+        pushOutputSettings()
         refreshConnectionState()
     }
 
-    func sessionReachabilityDidChange(_ session: WCSession) { refreshConnectionState() }
+    func sessionReachabilityDidChange(_ session: WCSession) {
+        pushOutputSettings()
+        refreshConnectionState()
+    }
     func session(_ session: WCSession, didReceiveMessage message: [String: Any]) { receive(message) }
     func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any]) { receive(userInfo) }
     func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) { receive(applicationContext) }

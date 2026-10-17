@@ -7,7 +7,7 @@
 //
 //  - 対象: iOS 17+（Map(position:) / MapReader / MapProxy / Marker を使用）
 //  - 現在地（CLLocationManager）は使わない。位置情報の権限は要求しない。
-//  - 終了地点は任意項目。未設定でもセッションは開始できる。
+//  - 終了地点は必須項目。未選択ではセッションを開始できない。
 //
 
 import SwiftUI
@@ -70,18 +70,20 @@ struct GoalPreviewMap: View {
 /// 地図をタップしてピンを置き、「決定」で確定する画面。
 ///
 /// - クリア: 画面内のピンを外す（この時点ではまだ確定しない）
-/// - 決定: ピンがあればその地点を、なければ「未設定」を onDecide に渡して閉じる
+/// - 決定: 選んだ地点を onDecide に渡して閉じる（未選択では決定できない）
 /// - キャンセル: 何も変えずに閉じる
 struct GoalMapView: View {
-    /// 決定時に呼ばれる。nil は「未設定にする」。
+    /// 決定時に呼ばれる。nil はクリア操作中の未選択状態。
     let onDecide: (GoalPoint?) -> Void
+    let activityModeLabel: String?
 
     @Environment(\.dismiss) private var dismiss
     @State private var position: MapCameraPosition
     @State private var pending: GoalPoint?
 
-    init(initialGoal: GoalPoint?, onDecide: @escaping (GoalPoint?) -> Void) {
+    init(initialGoal: GoalPoint?, activityModeLabel: String? = nil, onDecide: @escaping (GoalPoint?) -> Void) {
         self.onDecide = onDecide
+        self.activityModeLabel = activityModeLabel
         let center = initialGoal ?? GoalPoint.sapporoStation
         _position = State(initialValue: MapCameraPosition.region(center.region(span: 0.02)))
         _pending = State(initialValue: initialGoal)
@@ -98,7 +100,7 @@ struct GoalMapView: View {
     // 上部: 説明と選択中の座標
     private var header: some View {
         VStack(spacing: 4) {
-            Text("地図をタップして終了地点を選択")
+            Text(activityModeLabel.map { "\($0)の終了地点を選択" } ?? "地図をタップして終了地点を選択")
                 .font(.headline)
             if let p = pending {
                 Text(p.coordinateText)
@@ -138,26 +140,28 @@ struct GoalMapView: View {
         }
     }
 
-    // 下部: クリア / キャンセル / 決定
+    // 下部: クリアをアイコンにし、戻る・決定のラベル幅を確保する。
     private var buttons: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Button {
                 pending = nil
             } label: {
-                Text("クリア")
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
+                Image(systemName: "trash")
+                    .frame(width: 44, height: 44)
             }
             .buttonStyle(.bordered)
             .controlSize(.large)
             .disabled(pending == nil)
+            .accessibilityLabel("選択をクリア")
 
             Button {
                 dismiss()
             } label: {
-                Text("キャンセル")
+                Text("戻る")
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .padding(.vertical, 8)
             }
             .buttonStyle(.bordered)
             .controlSize(.large)
@@ -169,11 +173,14 @@ struct GoalMapView: View {
                 Text("決定")
                     .font(.headline)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .padding(.vertical, 8)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .tint(.green)
+            .disabled(pending == nil)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)

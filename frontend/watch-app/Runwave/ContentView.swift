@@ -10,7 +10,7 @@
 //    ただし終了地点の地図（GoalMapView.swift）は iOS 17+ の MapKit API を使う（Deployment Target は 26.2）
 //  - 終了地点（GoalMapView.swift）と信号のイラスト（SignalLightView.swift）は別ファイル
 //  - WatchConnectivity は WatchConnectivityLink.swift に分離
-//  - 信号・到着予測・目標ケイデンスの計算は書かない（目標は手動設定のみ）
+//  - 信号・到着予測の計算は書かない（開始時の目標ケイデンスは測定値を使う）
 //
 
 import SwiftUI
@@ -22,11 +22,17 @@ import Combine
 /// Apple Watch との接続状態。
 enum WatchConnectionState: Equatable {
     case notConnected
+    case notPaired
+    case watchAppNotInstalled
+    case waitingForReachability
     case connected
 
     var label: String {
         switch self {
         case .notConnected: return "未接続"
+        case .notPaired: return "iPhoneと未ペアリング"
+        case .watchAppNotInstalled: return "Watchアプリ未インストール"
+        case .waitingForReachability: return "Watchアプリを開いてください"
         case .connected: return "接続中"
         }
     }
@@ -86,6 +92,11 @@ protocol WatchLink: AnyObject {
     var onMetrics: ((WatchMetrics) -> Void)? { get set }
     /// 接続状態が変わったとき呼ばれる（同上）
     var onConnectionChange: ((WatchConnectionState) -> Void)? { get set }
+    var onGoalSetupRequested: ((String?) -> Void)? { get set }
+    var onOutputSettingsApplied: ((TempoOutputSettings) -> Void)? { get set }
+    var onOutputError: ((String) -> Void)? { get set }
+    func updateOutputSettings(_ settings: TempoOutputSettings)
+    func previewOutput(targetCadence: Int)
 
     /// 目標コマンドを Watch へ送る
     func send(_ command: TargetCommand)
@@ -102,6 +113,11 @@ final class NoWatchLink: WatchLink {
     var connectionState: WatchConnectionState { .notConnected }
     var onMetrics: ((WatchMetrics) -> Void)?
     var onConnectionChange: ((WatchConnectionState) -> Void)?
+    var onGoalSetupRequested: ((String?) -> Void)?
+    var onOutputSettingsApplied: ((TempoOutputSettings) -> Void)?
+    var onOutputError: ((String) -> Void)?
+    func updateOutputSettings(_ settings: TempoOutputSettings) {}
+    func previewOutput(targetCadence: Int) {}
 
     func send(_ command: TargetCommand) {}
     func workoutDidStart(sessionID: UUID) {}
@@ -127,6 +143,7 @@ struct SessionSummary: Equatable {
     var averageCadence: Int?
     /// デモ値から作られたサマリか
     var isDemo: Bool
+    var activityMode: ActivityMode
 }
 
 /// 1 つの数値を画面に出すときの表示内容。
@@ -154,13 +171,18 @@ final class SessionStore: ObservableObject {
     @Published private(set) var workoutState: WorkoutState = .idle
     @Published private(set) var latestMetrics: WatchMetrics?
     @Published private(set) var sessionID: UUID = UUID()
+    @Published private(set) var activityMode: ActivityMode = .running
     @Published private(set) var screen: AppScreen = .home
     @Published private(set) var summary: SessionSummary?
     /// DEBUG ビルドでのみ true にできる（リリースでは常に false）
     @Published private(set) var isDemoMode: Bool = false
-    /// 終了地点（任意）。未設定でもセッションは開始できる。
+    /// 終了地点。未設定の場合はセッションを開始できない。
     /// TODO(連携): 終了地点を送るかは Watch/シミュレーターと要合意（現状は iPhone 内のみで保持）
+    @Published private(set) var outputSettings = TempoOutputSettings.load()
+    @Published private(set) var outputSyncMessage = "Watch接続時に設定を反映します"
     @Published private(set) var goal: GoalPoint?
+    @Published private(set) var goalSetupRequested = false
+    @Published private(set) var goalSetupActivityMode: ActivityMode?
     /// 最後に受け取った信号情報。nil は未受信。iPhone では色を計算しない。
     @Published private(set) var latestSignal: SignalInfo?
 
@@ -180,6 +202,22 @@ final class SessionStore: ObservableObject {
         link.onConnectionChange = { [weak self] state in
             DispatchQueue.main.async { self?.handleConnectionChange(state) }
         }
+        link.onGoalSetupRequested = { [weak self] rawMode in
+            DispatchQueue.main.async {
+                self?.goalSetupActivityMode = rawMode.flatMap(ActivityMode.init(rawValue:))
+                self?.goalSetupRequested = true
+            }
+        }
+        link.onOutputSettingsApplied = { [weak self] settings in
+            DispatchQueue.main.async {
+                guard let self, self.outputSettings == settings else { return }
+                self.outputSyncMessage = "Watchへ反映済み"
+            }
+        }
+        link.onOutputError = { [weak self] message in
+            DispatchQueue.main.async { self?.outputSyncMessage = message }
+        }
+        link.updateOutputSettings(outputSettings)
     }
 
     // MARK: 経過時間
@@ -194,15 +232,51 @@ final class SessionStore: ObservableObject {
 
     // MARK: 目標ケイデンス
 
-    /// 目標ケイデンスを変更する（120...190 にクランプ）。セッション中なら Watch へ送る。
+    /// 目標ケイデンスを5歩/分単位にそろえる（120...190）。セッション中なら Watch へ送る。
     func setTargetCadence(_ value: Int) {
-        let clamped = min(max(value, Self.minCadence), Self.maxCadence)
-        guard clamped != targetCadence else { return }
-        targetCadence = clamped
+        let bounded = min(max(value, Self.minCadence), Self.maxCadence)
+        let rounded = Int((Double(bounded) / 5).rounded()) * 5
+        let normalized = min(max(rounded, Self.minCadence), Self.maxCadence)
+        guard normalized != targetCadence else { return }
+        targetCadence = normalized
         // ホームでの変更は「開始時」にまとめて送る。セッション中だけ即時送信する。
         if workoutState == .running || workoutState == .paused {
             sendCurrentTarget()
         }
+    }
+
+    // MARK: Watch のテンポ出力
+
+    func setOutputMode(_ mode: TempoOutputMode) {
+        var settings = outputSettings
+        settings.mode = mode
+        updateOutputSettings(settings)
+    }
+
+    func setHapticStyle(_ style: TempoHapticStyle) {
+        var settings = outputSettings
+        settings.hapticStyle = style
+        updateOutputSettings(settings)
+    }
+
+    func setAudioVolume(_ volume: Double) {
+        guard volume.isFinite else { return }
+        var settings = outputSettings
+        settings.volume = min(max(volume, 0), 1)
+        updateOutputSettings(settings)
+    }
+
+    private func updateOutputSettings(_ settings: TempoOutputSettings) {
+        guard settings != outputSettings else { return }
+        outputSettings = settings
+        settings.save()
+        outputSyncMessage = connectionState == .connected ? "Watchへ反映中…" : "Watch接続時に設定を反映します"
+        link.updateOutputSettings(settings)
+    }
+
+    func previewOutput() {
+        guard connectionState == .connected else { return }
+        link.previewOutput(targetCadence: targetCadence)
     }
 
     // MARK: 終了地点
@@ -216,6 +290,11 @@ final class SessionStore: ObservableObject {
     /// 終了地点を未設定に戻す。
     func clearGoal() {
         goal = nil
+    }
+
+    func clearGoalSetupRequest() {
+        goalSetupRequested = false
+        goalSetupActivityMode = nil
     }
 
     // MARK: 信号
@@ -260,8 +339,11 @@ final class SessionStore: ObservableObject {
 
     // MARK: ワークアウト操作
 
-    func start() {
+    func start(mode: ActivityMode, measuredCadence: Int) {
         guard workoutState == .idle || workoutState == .ended else { return }
+        guard goal?.isValid == true else { return }
+        activityMode = mode
+        targetCadence = Self.normalizedCadence(measuredCadence)
         sessionID = UUID()
         accumulated = 0
         runStartedAt = Date()
@@ -270,8 +352,15 @@ final class SessionStore: ObservableObject {
         resetSignal()
         workoutState = .running
         screen = .session
-        link.workoutDidStart(sessionID: sessionID)
+        link.updateOutputSettings(outputSettings)
         sendCurrentTarget()
+        link.workoutDidStart(sessionID: sessionID)
+    }
+
+    private static func normalizedCadence(_ value: Int) -> Int {
+        let bounded = min(max(value, minCadence), maxCadence)
+        let rounded = Int((Double(bounded) / 5).rounded()) * 5
+        return min(max(rounded, minCadence), maxCadence)
     }
 
     func pause() {
@@ -296,7 +385,8 @@ final class SessionStore: ObservableObject {
             elapsed: accumulated,
             distance: latestMetrics?.distance,
             averageCadence: latestMetrics?.averageCadence,
-            isDemo: isDemoMode
+            isDemo: isDemoMode,
+            activityMode: activityMode
         )
         screen = .result
         link.workoutDidEnd()
@@ -331,6 +421,8 @@ final class SessionStore: ObservableObject {
 
     private func handleConnectionChange(_ state: WatchConnectionState) {
         connectionState = state
+        outputSyncMessage = state == .connected ? "Watchへ反映中…" : "Watch接続時に設定を反映します"
+        if state == .connected { link.updateOutputSettings(outputSettings) }
         // セッション中に再接続したら、現在の目標を送り直す
         if state == .connected, workoutState == .running || workoutState == .paused {
             sendCurrentTarget()
@@ -424,11 +516,11 @@ private struct ConnectionBadge: View {
     var body: some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(state == .connected ? Color.green : Color.gray)
+                .fill(state == .connected ? Color.green : (state == .waitingForReachability ? Color.orange : Color.gray))
                 .frame(width: 10, height: 10)
             Text("Watch：\(state.label)")
                 .font(.subheadline.bold())
-                .foregroundColor(state == .connected ? Color.green : Color.secondary)
+                .foregroundColor(state == .connected ? Color.green : (state == .waitingForReachability ? Color.orange : Color.secondary))
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
@@ -481,7 +573,7 @@ private struct MetricCard: View {
     }
 }
 
-/// 目標ケイデンスを 1 刻みで調整する Stepper。
+/// 目標ケイデンスを 5 歩/分刻みで調整する Stepper。
 private struct CadenceStepper: View {
     @ObservedObject var store: SessionStore
 
@@ -492,9 +584,9 @@ private struct CadenceStepper: View {
                 set: { store.setTargetCadence($0) }
             ),
             in: SessionStore.minCadence...SessionStore.maxCadence,
-            step: 1
+            step: 5
         ) {
-            Text("目標を調整（1 歩/分刻み）")
+            Text("目標を調整（5 歩/分刻み）")
                 .font(.subheadline)
         }
     }
@@ -504,6 +596,7 @@ private struct CadenceStepper: View {
 
 private struct HomeView: View {
     @ObservedObject var store: SessionStore
+    @ObservedObject var calibration: StrideCalibrationManager
     @State private var showGoalMap = false
 
     var body: some View {
@@ -515,26 +608,26 @@ private struct HomeView: View {
 
                 ConnectionBadge(state: store.connectionState)
 
+                goalCard
+
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("目標ケイデンス")
+                    Text("測定した自然なケイデンス")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
 
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text("\(store.targetCadence)")
-                            .font(.system(size: 80, weight: .bold, design: .rounded))
-                            .monospacedDigit()
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.5)
-                        Text("歩/分（SPM）")
-                            .font(.title3.bold())
-                            .foregroundColor(.secondary)
+                    ForEach(ActivityMode.allCases) { mode in
+                        HStack {
+                            Label(mode.label, systemImage: mode.icon)
+                            Spacer()
+                            if let cadence = calibration.cadence(for: mode) {
+                                Text("\(cadence) 歩/分")
+                                    .font(.title3.bold().monospacedDigit())
+                            } else {
+                                Text("未測定").foregroundStyle(.secondary)
+                            }
+                        }
                     }
-                    .accessibilityElement(children: .combine)
-
-                    CadenceStepper(store: store)
-
-                    Text("範囲：\(SessionStore.minCadence)〜\(SessionStore.maxCadence) 歩/分")
+                    Text("開始時に選んだ運動の測定値を目標にします。セッション中は5歩/分刻みで調整できます。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -542,10 +635,8 @@ private struct HomeView: View {
                 .padding(20)
                 .background(CardBackground())
 
-                goalCard
-
-                if store.connectionState == .notConnected {
-                    Text("Watch未接続：目標値はこの iPhone 内で保持されます")
+                if store.connectionState != .connected {
+                    Text("Watch：\(store.connectionState.label)。WatchでRUNWAVEを開いてください。")
                         .font(.footnote)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
@@ -559,36 +650,70 @@ private struct HomeView: View {
             .padding(.bottom, 24)
         }
         .safeAreaInset(edge: .bottom) {
-            Button {
-                store.start()
-            } label: {
-                Text("セッション開始")
-                    .font(.title3.bold())
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
+            HStack(spacing: 10) {
+                ForEach(ActivityMode.allCases) { mode in
+                    Button {
+                        guard let cadence = calibration.cadence(for: mode) else { return }
+                        store.start(mode: mode, measuredCadence: cadence)
+                    } label: {
+                        Label(mode == .walking ? "歩いて開始" : "走って開始", systemImage: mode.icon)
+                            .font(.subheadline.bold())
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .tint(mode == .running ? .green : .blue)
+                    .disabled(store.goal == nil || calibration.stride(for: mode) == nil || calibration.cadence(for: mode) == nil)
+                    .accessibilityLabel("\(mode.label)を開始")
+                    .accessibilityHint(store.goal == nil ? "先に終了地点を設定してください" : "")
+                }
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .tint(.green)
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
             .background(.ultraThinMaterial)
         }
+        .safeAreaInset(edge: .top) {
+            HStack(spacing: 12) {
+                ForEach(ActivityMode.allCases) { mode in
+                    Label(mode.label, systemImage: mode.icon)
+                        .font(.caption.bold())
+                        .foregroundStyle(calibration.stride(for: mode) == nil ? .secondary : .primary)
+                    if let stride = calibration.stride(for: mode) {
+                        Text(String(format: "%.2fm", stride)).font(.caption.monospacedDigit())
+                    } else {
+                        Text("歩幅未測定").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+            .background(.ultraThinMaterial)
+        }
         .sheet(isPresented: $showGoalMap) {
-            GoalMapView(initialGoal: store.goal) { newGoal in
+            GoalMapView(initialGoal: store.goal, activityModeLabel: store.goalSetupActivityMode?.label) { newGoal in
                 if let point = newGoal {
                     store.setGoal(point)
                 } else {
                     store.clearGoal()
                 }
             }
+            .onDisappear { store.clearGoalSetupRequest() }
+        }
+        .onChange(of: store.goalSetupRequested) { _, requested in
+            if requested { showGoalMap = true }
+        }
+        .onAppear {
+            if store.goalSetupRequested { showGoalMap = true }
         }
     }
 
-    /// 終了地点カード（任意項目）。未設定なら「未設定」、設定済みなら地図プレビューと緯度経度。
+    /// 終了地点カード（必須項目）。
     private var goalCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("終了地点（任意）")
+            Text("終了地点（必須）")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
 
@@ -601,8 +726,8 @@ private struct HomeView: View {
                     .monospacedDigit()
                     .foregroundColor(.secondary)
             } else {
-                Text("未設定")
-                    .font(.title3.bold())
+                Text("未設定：開始前に地図で設定してください")
+                    .font(.subheadline.bold())
                     .foregroundColor(.secondary)
             }
 
@@ -641,6 +766,145 @@ private struct HomeView: View {
     #endif
 }
 
+/// 選択した運動種別の歩幅を測定するカード。
+private struct StrideCalibrationCard: View {
+    @ObservedObject var store: SessionStore
+    @ObservedObject var calibration: StrideCalibrationManager
+    let mode: ActivityMode
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("\(mode.label)の歩幅", systemImage: mode.icon).font(.headline)
+            if calibration.isMeasuring && calibration.measuringMode == mode {
+                HStack(spacing: 12) {
+                    measurementValue("距離", value: String(format: "%.0f m", calibration.distanceM))
+                    measurementValue("歩数", value: "\(calibration.steps) 歩")
+                    measurementValue("時間", value: elapsedText)
+                }
+                Button { calibration.finish() } label: {
+                    Label("測定を完了", systemImage: "checkmark.circle").frame(maxWidth: .infinity)
+                }.buttonStyle(.borderedProminent)
+                Button("キャンセル", role: .cancel) { calibration.cancel() }.frame(maxWidth: .infinity)
+            } else {
+                if let stride = calibration.stride(for: mode) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(String(format: "%.2f", stride)).font(.system(size: 36, weight: .bold, design: .rounded)).monospacedDigit()
+                        Text("m / 歩").font(.headline).foregroundStyle(.secondary)
+                    }
+                    if let cadence = calibration.cadence(for: mode) {
+                        Text("測定中の平均ケイデンス：\(cadence) 歩/分").font(.subheadline).foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text("屋外でiPhoneを携帯し、\(mode == .walking ? "歩いて" : "走って")30m以上進むと測定できます。")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
+                Button { calibration.start(mode: mode) } label: {
+                    Label(calibration.stride(for: mode) == nil ? "測定を開始" : "測り直す", systemImage: "location.north.line").frame(maxWidth: .infinity)
+                }.buttonStyle(.borderedProminent).disabled(calibration.isMeasuring)
+            }
+            if let message = calibration.errorMessage {
+                Text(message).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+            }
+            Text("GPS距離とiPhoneの歩数から計算します。測定中はアプリを開いたままにしてください。")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading).padding(16).background(CardBackground())
+    }
+
+    private var elapsedText: String {
+        let seconds = Int(calibration.elapsedS)
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+    private func measurementValue(_ title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            Text(value).font(.subheadline.bold()).monospacedDigit().lineLimit(1).minimumScaleFactor(0.75)
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// 運動種別ごとのラベル長に左右されない、同じ幅の切替ボタン。
+private struct ActivityModePicker: View {
+    @Binding var selection: ActivityMode
+    var isDisabled = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(ActivityMode.allCases) { mode in
+                Button {
+                    selection = mode
+                } label: {
+                    Label(mode.label, systemImage: mode.icon)
+                        .font(.subheadline.bold())
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 44)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(selection == mode ? Color.green.opacity(0.16) : Color.secondary.opacity(0.10))
+                        )
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(selection == mode ? Color.green.opacity(0.55) : .clear, lineWidth: 1)
+                        }
+                        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .disabled(isDisabled)
+                .accessibilityAddTraits(selection == mode ? .isSelected : [])
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+private struct SettingsView: View {
+    @ObservedObject var store: SessionStore
+    @ObservedObject var calibration: StrideCalibrationManager
+    @State private var calibrationMode: ActivityMode = .walking
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 18) {
+                Text("設定").font(.largeTitle.bold()).frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("マイ歩幅").font(.headline)
+                    ActivityModePicker(selection: $calibrationMode, isDisabled: calibration.isMeasuring)
+                    StrideCalibrationCard(store: store, calibration: calibration, mode: calibrationMode)
+                }
+                TempoOutputSettingsCard(store: store)
+            }
+            .padding(16)
+        }
+    }
+}
+
+private struct FirstStrideSetupView: View {
+    @ObservedObject var store: SessionStore
+    @ObservedObject var calibration: StrideCalibrationManager
+    @State private var mode: ActivityMode = .walking
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 20) {
+                    Image(systemName: "figure.walk.motion").font(.system(size: 52)).foregroundStyle(.green)
+                    Text("まずはマイ歩幅を測定").font(.title2.bold())
+                    Text("RUNWAVEを使う前に、歩幅を1種類測定してください。ランニングとウォーキングは、あとからそれぞれ別に登録できます。")
+                        .multilineTextAlignment(.center).foregroundStyle(.secondary)
+                    ActivityModePicker(selection: $mode, isDisabled: calibration.isMeasuring)
+                    StrideCalibrationCard(store: store, calibration: calibration, mode: mode)
+                    Text("初回測定後にメイン画面が使えるようになります。未測定の運動は開始できません。")
+                        .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                }.padding(20)
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .principal) { Text("初回設定").font(.headline) } }
+        }
+    }
+}
+
 // MARK: - 画面 2: セッション
 
 private struct SessionView: View {
@@ -652,7 +916,7 @@ private struct SessionView: View {
             VStack(spacing: 16) {
                 // 画面上部: タイトル・接続状態・（デモ時のみ）デモ値バッジ
                 HStack(spacing: 8) {
-                    Text("RUNWAVE")
+                    Label(store.activityMode.label, systemImage: store.activityMode.icon)
                         .font(.system(size: 22, weight: .heavy, design: .rounded))
                     if store.isDemoMode {
                         DemoBadge()
@@ -702,7 +966,7 @@ private struct SessionView: View {
                 .padding(16)
                 .background(CardBackground())
 
-                // 終了地点（任意）の設定状況
+                // 必須の終了地点の設定状況
                 HStack(spacing: 8) {
                     Image(systemName: "mappin.and.ellipse")
                         .foregroundColor(.secondary)
@@ -836,7 +1100,7 @@ private struct ResultView: View {
         ScrollView {
             VStack(spacing: 16) {
                 HStack(spacing: 8) {
-                    Text("結果")
+                    Label(store.summary?.activityMode.label ?? "結果", systemImage: store.summary?.activityMode.icon ?? "checkmark.circle")
                         .font(.system(size: 32, weight: .heavy, design: .rounded))
                     if store.summary?.isDemo == true {
                         DemoBadge()
@@ -922,18 +1186,27 @@ private struct ResultView: View {
 
 struct ContentView: View {
     @StateObject private var store: SessionStore
+    @StateObject private var calibration = StrideCalibrationManager()
 
     init(link: any WatchLink = WatchConnectivityLink()) {
         _store = StateObject(wrappedValue: SessionStore(link: link))
     }
 
     var body: some View {
-        // NavigationStack は使わない。画面は store.screen で切り替えるので、
-        // スワイプバックなどでセッションが壊れない。
         Group {
             switch store.screen {
             case .home:
-                HomeView(store: store)
+                if !calibration.hasAnyStride {
+                    FirstStrideSetupView(store: store, calibration: calibration)
+                } else {
+                    TabView {
+                        HomeView(store: store, calibration: calibration)
+                            .tabItem { Label("メイン", systemImage: "figure.run") }
+                        SettingsView(store: store, calibration: calibration)
+                            .tabItem { Label("設定", systemImage: "slider.horizontal.3") }
+                    }
+                    .tint(.green)
+                }
             case .session:
                 SessionView(store: store)
             case .result:

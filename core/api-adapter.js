@@ -8,7 +8,10 @@
 export const SIGNAL_FIELDS = ['cycleS', 'greenS', 'yellowS', 'redS', 'phaseS', 'crossingM'];
 export const RUNNER_FIELDS = ['strideM', 'baseBpm'];
 // API の日本語キー → core のキー（ガイド記載）
-const RUNNER_KEYS = { strideM: ['歩幅', 'strideM'], baseBpm: ['通常BPM', 'baseBpm'] };
+// NormalBPM：バックエンドは保存（POST）後にこの名前で返す（9e35713 時点）。保存前は 通常BPM
+const RUNNER_KEYS = { strideM: ['歩幅', 'strideM'], baseBpm: ['通常BPM', 'NormalBPM', 'baseBpm'] };
+// 任意項目（無ければ core の既定値を使う）。早歩きの歩幅
+const OPTIONAL_RUNNER_KEYS = { walkStrideM: ['walkStrideM', '早歩き歩幅'] };
 
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -54,6 +57,12 @@ export function extractRunner(json) {
     const name = names.find((n) => isObj(src) && n in src);
     if (!name) problems.push(`${names[0]} がない`);
     else if (!isNum(src[name]) || src[name] <= 0) problems.push(`${name} が正の数値でない（${JSON.stringify(src[name])}）`);
+    else runner[key] = src[name];
+  }
+  for (const [key, names] of Object.entries(OPTIONAL_RUNNER_KEYS)) {
+    const name = names.find((n) => isObj(src) && n in src);
+    if (!name) continue;
+    if (!isNum(src[name]) || src[name] <= 0) problems.push(`${name} が正の数値でない（${JSON.stringify(src[name])}）`);
     else runner[key] = src[name];
   }
   return { runner: problems.length ? null : runner, problems };
