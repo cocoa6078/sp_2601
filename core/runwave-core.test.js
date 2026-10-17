@@ -571,3 +571,20 @@ test('早歩きのシナリオ W：走りだけでは35秒止まるが、早歩�
   assert.equal(runwave.stops, 0);
   assert.equal(runwave.walkCount, 1);
 });
+
+test('route.arriveWindow: 指定が無ければ従来どおり。指定すればその時間帯に着く（無理なら従来の選び方に戻る）', () => {
+  const base = SCENARIOS.A;
+  const s0 = simulate(base).state;
+  const arrive = (st) => st.history.find((h) => h.x >= base.route.crossingX)?.t;
+  // 従来の到着より遅い時間帯を指定（同じ青の中）
+  const win = { startT: 230, endT: 240 };
+  const s1 = simulate({ ...base, route: { ...base.route, arriveWindow: win } }).state;
+  assert.equal(s1.stops, 0);
+  const t1 = arrive(s1);
+  assert.ok(t1 >= win.startT - 1 && t1 <= win.endT + 1, `到着 ${t1}`);
+  assert.notEqual(arrive(s0), t1);
+  // 届かない時間帯なら従来と同じ
+  const s2 = simulate({ ...base, route: { ...base.route, arriveWindow: { startT: 10, endT: 11 } } }).state;
+  assert.equal(s2.finishTimeS, s0.finishTimeS);
+  assert.equal(s2.stops, s0.stops);
+});

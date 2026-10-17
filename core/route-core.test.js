@@ -96,7 +96,7 @@ test('route: 赤待ちのケースもある（通常走行）。停止時間の�
   for (const enabled of [false, true]) {
     const r = simulateRoute(withRouteControl({ enabled })).summary;
     const sumWait = r.signals.reduce((a, s) => a + s.waitS, 0);
-    near(r.stopTimeS, sumWait, 1e-6);
+    near(r.stopTimeS, sumWait, 1e-4);   // 再開のイベント時刻は境界の判定のため 1e-6 秒だけ後ろ
     assert.equal(r.stops, r.signals.filter((s) => s.waited).length);
   }
   const normal = simulateRoute(withRouteControl({ enabled: false })).summary;
@@ -174,4 +174,46 @@ test('route: compareRoute は { normal, runwave } と { off, on } の両方で�
   const r = compareRoute(ROUTE);
   assert.equal(r.off, r.normal);
   assert.equal(r.on, r.runwave);
+});
+
+// ---------- 先読み ----------
+const shifted = (off, ph) => ({
+  ...ROUTE, goalM: off + 1255 + 15 + 200,
+  signals: API.map(([id, d, c, g, r, p]) => ({ id, atM: off + d, signal: { cycleS: c, greenS: g, yellowS: 5, redS: r, phaseS: p + ph, crossingM: 15 } })),
+});
+
+test('route 先読み: デモ5交差点では、今の信号だけを見るより止まる回数が減る（2回 → 0回）', () => {
+  const a = simulateRoute({ ...ROUTE, lookahead: false }).summary;
+  const b = simulateRoute(ROUTE).summary;
+  assert.equal(a.stops, 2);
+  assert.equal(b.stops, 0);
+});
+
+test('route 先読み: スタート位置と位相を変えた経路で、止まる回数が増えない', () => {
+  for (const off of [100, 250, 400]) for (const ph of [0, 30, 60]) {
+    const c = shifted(off, ph);
+    const a = simulateRoute({ ...c, lookahead: false }).summary, b = simulateRoute(c).summary;
+    assert.ok(b.stops <= a.stops, `${off}/${ph}: ${a.stops} → ${b.stops}`);
+  }
+});
+
+test('route 先読み: RUNWAVE でも赤待ちが必要な経路では待つ（非青で横断に入らない）', () => {
+  let found = false;
+  for (const off of [100, 150]) for (const ph of [0, 10, 30]) {
+    const { state, summary } = simulateRoute(shifted(off, ph));
+    if (summary.stops === 0) continue;
+    found = true;
+    for (const e of state.events) {
+      const sig = API.find((x) => x[0] === e.signalId);
+      if (e.type === 'crossStart' || e.type === 'waitEnd') assert.equal(e.color, 'green');
+      if (e.type === 'waitStart') assert.notEqual(e.color, 'green');
+      assert.ok(sig);
+    }
+  }
+  assert.ok(found, 'RUNWAVE でも待つ経路がある');
+});
+
+test('route 先読み: 最後の信号（と信号1つの経路）では先読みしない。lookahead: false でも動く', () => {
+  const one = asRoute(SCENARIOS.B);
+  assert.deepEqual(simulateRoute(one).summary, simulateRoute({ ...one, lookahead: false }).summary);
 });
