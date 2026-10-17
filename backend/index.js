@@ -13,7 +13,14 @@ app.use(express.json());
 // ---------------------------------------------------------
 const logsFilePath = path.join(__dirname, 'logs.json');
 
-let userCalibrationData = { 歩幅: 0.8, 通常BPM: 150 };
+// ---------------------------------------------------------
+// キャリブレーション設定データの初期値（早歩き歩幅を追加）
+// ---------------------------------------------------------
+let userCalibrationData = { 
+  歩幅: 0.8, 
+  通常BPM: 150, 
+  walkStrideM: 0.75 // 早歩きの歩幅（任意項目、既定値0.75m）
+};
 let runLogs = [];
 
 // サーバー起動時にログファイル（logs.json）を読み込む
@@ -157,13 +164,28 @@ app.get('/api/signals/region/:region', (req, res) => {
 // [POST] キャリブレーションの保存
 app.post('/api/calibration', (req, res) => {
   const body = req.body ?? {};
-  const { 歩幅, 通常BPM } = body;
+  const { 歩幅, 通常BPM, walkStrideM } = body;
   
+  // 基本項目のバリデーション
   if (typeof 歩幅 !== 'number' || 歩幅 <= 0 || typeof 通常BPM !== 'number' || 通常BPM <= 0) {
-    return res.status(400).json({ ステータス: "エラー", メッセージ: "正の数値を入力してください" });
+    return res.status(400).json({ ステータス: "エラー", メッセージ: "歩幅と通常BPMは正の数値である必要があります。" });
   }
-  userCalibrationData = { 歩幅, 通常BPM };
-  res.status(200).json({ ステータス: "成功", データ: userCalibrationData });
+
+  // 早歩き歩幅（任意項目）が送信された場合のバリデーション
+  if (walkStrideM !== undefined && (typeof walkStrideM !== 'number' || walkStrideM <= 0)) {
+    return res.status(400).json({ ステータス: "エラー", メッセージ: "早歩きの歩幅は正の数値である必要があります。" });
+  }
+
+  userCalibrationData = { 
+    歩幅, 
+    NormalBPM: 通常BPM, 
+    walkStrideM: walkStrideM !== undefined ? walkStrideM : userCalibrationData.walkStrideM 
+  };
+
+  res.status(200).json({
+    ステータス: "成功",
+    データ: userCalibrationData
+  });
 });
 
 // [GET] キャリブレーションの取得
@@ -180,19 +202,33 @@ app.post('/api/logs', (req, res) => {
     return res.status(400).json({ ステータス: "エラー", メッセージ: "データが空です" });
   }
 
+  // gait（走り/早歩き）が指定されている場合のバリデーション
+  const { gait, walkCount, walkTimeS, walkDistanceM } = logData;
+  if (gait !== undefined && gait !== "run" && gait !== "walk") {
+    return res.status(400).json({ ステータス: "エラー", メッセージ: "gaitは run または walk である必要があります。" });
+  }
+
+  // 数値項目の負の値チェック
+  if (
+    (walkCount !== undefined && (typeof walkCount !== 'number' || walkCount < 0)) ||
+    (walkTimeS !== undefined && (typeof walkTimeS !== 'number' || walkTimeS < 0)) ||
+    (walkDistanceM !== undefined && (typeof walkDistanceM !== 'number' || walkDistanceM < 0))
+  ) {
+    return res.status(400).json({ ステータス: "エラー", メッセージ: "早歩き関連の数値は負の値にできません。" });
+  }
+
   const newLog = { 
-    id: `log_${Date.now()}`, // 一意のIDを付与
+    id: `log_${Date.now()}`,
     時刻: new Date().toISOString(), 
-    ...logData // { signalId, summary, history: [{t, x, bpm, ...}] } など
+    ...logData 
   };
   
   runLogs.push(newLog);
 
-  // ローカル環境のみファイル保存（Vercel本番ではメモリ上で処理）
   try {
     fs.writeFileSync(logsFilePath, JSON.stringify(runLogs, null, 2), 'utf-8');
   } catch (error) {
-    console.error("⚠️ 本番環境または書き込み権限がないため、メモリ上にのみ保存します。");
+    console.error("ログのファイル保存に失敗しました:", error.message);
   }
 
   res.status(201).json({
