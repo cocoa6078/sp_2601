@@ -1,0 +1,29 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "web-simulator",
+      "runtimeExecutable": "npm.cmd",
+      "runtimeArgs": [
+        "--prefix",
+        "frontend/web-simulator",
+        "run",
+        "dev"
+      ],
+      "port": 5174,
+      "url": "http://127.0.0.1:5174"
+    },
+    {
+      "name": "presentation-simulator",
+      "runtimeExecutable": "npm.cmd",
+      "runtimeArgs": [
+        "--prefix",
+        "frontend/presentation-simulator",
+        "run",
+        "dev"
+      ],
+      "port": 5175,
+      "url": "http://127.0.0.1:5175"
+    }
+  ]
+}

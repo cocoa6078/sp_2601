@@ -1,0 +1,16 @@
+{
+  "name": "runwave-presentation-simulator",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "RUNWAVE 発表・画面収録用の比較シミュレーター（通常走行 vs RUNWAVE）",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "devDependencies": {
+    "vite": "^6.4.4"
+  }
+}

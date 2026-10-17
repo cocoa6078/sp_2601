@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RUNWAVE 連動デモ</title>
+  <link rel="stylesheet" href="/src/styles.css" />
+</head>
+<body>
+  <div id="viewport">
+    <main id="stage" aria-label="RUNWAVE 連動デモ">
+      <div id="zoom">
+        <header id="header">
+          <div class="brand">RUNWAVE <span class="tag">連動デモ</span></div>
+          <div class="scn" id="scn-label"></div>
+          <div class="hdr-right">
+            <span class="pill" id="status-pill"></span>
+            <span class="clock" id="clock"></span>
+            <span class="pill speed" id="speed-label"></span>
+          </div>
+        </header>
+        <section id="world" aria-label="人物と道路">
+          <div id="world-svg"></div>
+          <div id="progress"></div>
+          <div id="hud"></div>
+          <div id="signal-panel"></div>
+          <div id="jump-badge" hidden></div>
+          <div id="world-msg" hidden></div>
+        </section>
+        <section id="flow" aria-label="処理の流れ"></section>
+        <section id="controls" aria-label="操作">
+          <div class="grp">
+            <button id="btn-play" class="primary">再生</button>
+            <button id="btn-pause">一時停止</button>
+            <button id="btn-reset">リセット</button>
+          </div>
+          <div class="grp" id="grp-speed" role="group" aria-label="倍率"></div>
+          <div class="grp" id="grp-scn" role="group" aria-label="シナリオ"></div>
+          <div class="grp">
+            <button id="btn-explain" class="accent">処理を見せる</button>
+            <button id="btn-jump">見せ場へ移動</button>
+            <button id="btn-zoom" aria-pressed="true">ズーム演出 ON</button>
+          </div>
+          <div id="result"></div>
+        </section>
+        <div id="subtitle-slot"></div>
+        <footer id="note">仮想信号を用いたシミュレーション／判定はブラウザ内で実行／端末・振動はイメージ／BPM＝歩調（歩/分）。心拍数ではありません</footer>
+      </div>
+      <div id="subtitle" aria-live="polite"></div>
+      <div id="tour-title" hidden></div>
+    </main>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
