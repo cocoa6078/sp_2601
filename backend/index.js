@@ -31,9 +31,9 @@ const logsFilePath = path.join(__dirname, 'logs.json');
 
 // キャリブレーション設定データの初期値（早歩き歩幅を追加）
 let userCalibrationData = { 
-  歩幅: 0.8, 
-  通常BPM: 150, 
-  walkStrideM: 0.75 // 早歩きの歩幅（任意項目、既定値0.75m）
+  "歩幅": 0.8, 
+  "通常BPM": 150, 
+  "walkStrideM": 0.75 
 };
 let runLogs = [];
 
@@ -202,7 +202,10 @@ app.post('/api/calibration', (req, res) => {
   const body = req.body ?? {};
   const { 歩幅, 通常BPM, walkStrideM } = body;
   
-  if (typeof 歩幅 !== 'number' || 歩幅 <= 0 || typeof 通常BPM !== 'number' || 通常BPM <= 0) {
+  // キーの揺れ（NormalBPM または 通常BPM）を考慮した受取
+  const targetBpm = 通常BPM !== undefined ? 通常BPM : body.NormalBPM;
+
+  if (typeof 歩幅 !== 'number' || 歩幅 <= 0 || typeof targetBpm !== 'number' || targetBpm <= 0) {
     return res.status(400).json({ ステータス: "エラー", メッセージ: "歩幅と通常BPMは正の数値である必要があります。" });
   }
 
@@ -211,9 +214,9 @@ app.post('/api/calibration', (req, res) => {
   }
 
   userCalibrationData = { 
-    歩幅, 
-    NormalBPM: 通常BPM, 
-    walkStrideM: walkStrideM !== undefined ? walkStrideM : userCalibrationData.walkStrideM 
+    "歩幅": 歩幅, 
+    "通常BPM": targetBpm, 
+    "walkStrideM": walkStrideM !== undefined ? walkStrideM : userCalibrationData.walkStrideM 
   };
 
   res.status(200).json({
