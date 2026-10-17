@@ -365,6 +365,140 @@ app.get('/api/sessions/:sessionId/guidance', (req, res) => {
     データ: guidanceData
   });
 });
+function calculatePointToSegmentDistanceM(pLat, pLon, aLat, aLon, bLat, bLon) {
+  const R = 6371e3;
+  const toRad = (deg) => (deg * Math.PI) / 180;
+
+  const latP = toRad(pLat), lonP = toRad(pLon);
+  const latA = toRad(aLat), lonA = toRad(aLon);
+  const latB = toRad(bLat), lonB = toRad(bLon);
+
+  const x = (lonB - lonA) * Math.cos((latA + latB) / 2);
+  const y = (latB - latA);
+  const lenSq = x * x + y * y;
+
+  let t = 0;
+  if (lenSq > 0) {
+    const xp = (lonP - lonA) * Math.cos(latA);
+    const yp = (latP - latA);
+    t = ((xp * x) + (yp * y)) / lenSq;
+    t = Math.max(0, Math.min(1, t));
+  }
+
+  const projLat = latA + t * (latB - latA);
+  const projLon = lonA + t * (lonB - lonA);
+
+  const dLat = projLat - latP;
+  const dLon = (projLon - lonP) * Math.cos((latP + projLat) / 2);
+  return R * Math.sqrt(dLat * dLat + dLon * dLon);
+}
+
+const requestRateLimits = new Map();
+
+app.post('/api/signals/along-route', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+
+  const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  let rateRecord = requestRateLimits.get(clientIp);
+  if (!rateRecord || now - rateRecord.windowStart > 60000) {
+    rateRecord = { windowStart: now, count: 0 };
+    requestRateLimits.set(clientIp, rateRecord);
+  }
+  rateRecord.count++;
+  if (rateRecord.count > 30) {
+    return res.status(429).json({
+      error: {
+        code: "RATE_LIMITED",
+        message: "Too many requests. Please try again later.",
+        retryable: true
+      }
+    });
+  }
+
+  const body = req.body ?? {};
+  const route = body.route;
+  const corridorM = Number(body.corridorM) || 30;
+
+  if (!route || route.type !== 'LineString' || !Array.isArray(route.coordinates)) {
+    return res.status(400).json({
+      error: { code: "INVALID_ROUTE_GEOMETRY", message: "GeoJSON LineString format is required.", retryable: false }
+    });
+  }
+
+  if (route.coordinates.length < 2 || route.coordinates.length > 1000) {
+    return res.status(400).json({
+      error: { code: "INVALID_ROUTE_GEOMETRY", message: "Coordinate points must be between 2 and 1000.", retryable: false }
+    });
+  }
+
+  if (corridorM < 10 || corridorM > 100) {
+    return res.status(400).json({
+      error: { code: "INVALID_ROUTE_GEOMETRY", message: "corridorM must be between 10 and 100.", retryable: false }
+    });
+  }
+
+  if (!allSignalsDataF02 || allSignalsDataF02.length === 0) {
+    return res.status(503).json({
+      error: { code: "SIGNAL_DATA_UNAVAILABLE", message: "Signal database is not loaded.", retryable: true }
+    });
+  }
+
+  const matches = [];
+  const coords = route.coordinates; // [[lon, lat], ...]
+
+  for (const signal of allSignalsDataF02) {
+    if (typeof signal.lat !== 'number' || typeof signal.lon !== 'number' || Number.isNaN(signal.lat) || Number.isNaN(signal.lon)) {
+      continue;
+    }
+
+    let isWithinCorridor = false;
+    for (let i = 0; i < coords.length - 1; i++) {
+      const lonA = coords[i][0], latA = coords[i][1];
+      const lonB = coords[i+1][0], latB = coords[i+1][1];
+
+      const distM = calculatePointToSegmentDistanceM(signal.lat, signal.lon, latA, lonA, latB, lonB);
+      if (distM <= corridorM) {
+        isWithinCorridor = true;
+        break;
+      }
+    }
+
+    if (isWithinCorridor) {
+      matches.push({
+        physicalSignalId: signal.signalId,
+        lat: signal.lat,
+        lon: signal.lon,
+        timing: {
+          cycleS: signal.cycleS,
+          greenS: signal.greenS,
+          yellowS: signal.yellowS,
+          redS: signal.redS,
+          phaseS: signal.phaseS
+        },
+        crossingM: signal.crossingM,
+        headingDeg: null,
+        approachDirection: null,
+        matchQuality: "position-only",
+        quality: "estimated",
+        source: "JARTIC-derived signal split; coordinates from source/scrape",
+        isEstimated: true,
+        note: signal.note || "※車両用信号のスプリット由来の推定値です。"
+      });
+    }
+  }
+
+  return res.status(200).json({
+    schemaVersion: 1,
+    dataVersion: "hokkaido-signals-2026-10",
+    coverage: { region: "hokkaido", complete: false },
+    matches: matches,
+    warnings: [
+      "車両用信号の推定値です。歩行者信号・進行方向との対応は未確認です。",
+      "crossingM は一律仮定値（15m）が含まれています。"
+    ]
+  });
+});
 // ---------------------------------------------------------
 // 3. エラーハンドリング (必ずルート定義の最後に配置)
 // ---------------------------------------------------------
