@@ -6,16 +6,15 @@ Windows で書いた SwiftUI のソースです。**ビルド・シミュレー�
 
 | ファイル | 内容 |
 |---|---|
-| `frontend/iphone-ui/ContentView.swift` | 新規。iPhone UI 一式（型・状態管理・3画面）を 1 ファイルにまとめたもの |
-| `frontend/iphone-ui/README.md` | このメモ |
+| `frontend/watch-app/Runwave/ContentView.swift` | テンプレートを置き換え。iPhone UI 一式（型・状態管理・3画面）を 1 ファイルにまとめたもの |
+| `frontend/iP実装メモ.md` | このメモ（`iP仕様書.md` への回答） |
 
-Xcode プロジェクト（`frontend/watch-app/`）はリポジトリに未 push のため、置き場所を分けています。`.pbxproj`・署名・Bundle ID・Capabilities、Watch ターゲット、`core/`・`backend/` は変更していません。
+`RunwaveApp.swift`・`.pbxproj`・署名・Bundle ID・Capabilities、Watch ターゲット、`core/`・`backend/` は変更していません。
 
 ### 適用手順（Mac）
 
-1. `frontend/watch-app/Runwave/ContentView.swift`（テンプレート）を、このフォルダの `ContentView.swift` で**丸ごと上書き**する
-2. `RunwaveApp.swift` は変更しない。中身が `WindowGroup { ContentView() }` であることだけ確認する
-3. 新しいファイルを追加していないので、ターゲットへの登録作業はいらない（既存の ContentView.swift の所属＝`Runwave` ターゲットのまま）
+1. `git pull` するだけ。新しい Swift ファイルは足していないので、ターゲットへの登録はいらない（`ContentView.swift` は `Runwave` ターゲットのまま）
+2. `RunwaveApp.swift` は `WindowGroup { ContentView() }` のままで動く作り
 
 ## 2. 画面と操作の概要
 
@@ -37,9 +36,9 @@ Xcode プロジェクト（`frontend/watch-app/`）はリポジトリに未 push
 
 ## 4. Mac 側で確認してほしいこと
 
-- [ ] ビルドが通るか（iOS 16 以降を想定。`TimelineView`・`confirmationDialog`・`safeAreaInset`・`.ultraThinMaterial` を使用。`any WatchLink` の書き方は Xcode 14 以降が必要）
-- [ ] プロジェクトの Deployment Target が iOS 16 以上か
-- [ ] Swift 6 モードや「Default Actor Isolation = MainActor」が有効な場合に、並行処理の警告・エラーが出ないか（`SessionStore` は `@MainActor` を付けておらず、Watch からのコールバックを `DispatchQueue.main.async` でメインスレッドに渡している）
+- [ ] ビルドが通るか（コードは iOS 16 以降の API だけで書いた。プロジェクトの Deployment Target は 26.2 なので範囲内）
+- [ ] プロジェクトは `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`・Approachable Concurrency・Swift 5 モード。全部の型が MainActor 扱いになる前提で、並行処理の警告が出ないか（Watch からのコールバックは `DispatchQueue.main.async` でメインスレッドに渡している。`WatchMetrics` などの `Codable` 準拠は今は使っていない）
+- [ ] `.foregroundColor` は iOS 17 以降では非推奨。警告が出るだけで動作には影響しない見込み
 - [ ] 小さい画面（iPhone SE）とダークモードで文字が切れないか
 - [ ] 一時停止中に経過時間が止まり、再開すると続きから進むか
 - [ ] Debug でデモ値を ON にしたとき、すべての値に「デモ値」と分かる表示が付いているか
@@ -47,4 +46,4 @@ Xcode プロジェクト（`frontend/watch-app/`）はリポジトリに未 push
 
 ## 5. 差分の受け取り方
 
-ブランチ `feat/iphone-ui`（`origin/main` 9ee025f から作成）。2026-10-17 時点では commit も push もしていません。push は本人が行います。
+`main` に commit 済み（2026-10-17）。`git log -- frontend/watch-app/Runwave/ContentView.swift` で差分を確認できます。
