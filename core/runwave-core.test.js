@@ -4,7 +4,7 @@ import {
   calibrate, requiredBpm, signalAt, safeGreenWindows, canEnter, limitRate, chooseTarget,
   createRun, step, simulate, compare, validateConfig, MODES,
 } from './runwave-core.js';
-import { SCENARIOS, DEMO, withCrossing, withModel } from './scenarios.js';
+import { SCENARIOS, DEMO, SCENARIOS_800M, DEMO_800M, withCrossing, withModel } from './scenarios.js';
 
 const near = (a, b, eps = 1e-6) => assert.ok(Math.abs(a - b) < eps, `${a} ≉ ${b}`);
 const SIG = { cycleS: 120, greenS: 50, yellowS: 5, redS: 65, phaseS: 0, crossingM: 20 };
@@ -374,6 +374,54 @@ test('length モデル（拡張）: シナリオB は横断20mだと回避でき
 
 test('デモ推奨: 通常は止まり RUNWAVE は止まらない。位相±5秒でも成立', () => {
   for (const cfg of [DEMO.main, DEMO.sub]) {
+    for (let d = -5; d <= 5; d++) {
+      const { normal, runwave } = compare(withPhase(cfg, cfg.signal.phaseS + d));
+      assert.equal(normal.stops, 1);
+      assert.equal(runwave.stops, 0);
+    }
+  }
+});
+
+// ---------- 改定案のシナリオ（800m・余裕3/8秒・横断長15m） ----------
+test('改定案 A: 通常は21秒停止、RUNWAVE は減速して停止なし', () => {
+  const { normal, runwave } = compare(SCENARIOS_800M.A);
+  assert.equal(normal.stops, 1);
+  near(normal.stopTimeS, 21);
+  near(normal.totalTimeS, 521, 0.11);
+  assert.equal(runwave.stops, 0);
+  assert.equal(runwave.minBpm, 141);
+  assert.equal(runwave.maxBpm, 150);
+});
+
+test('改定案 B: 通常は56秒停止、RUNWAVE は加速して停止なし', () => {
+  const { normal, runwave } = compare(SCENARIOS_800M.B);
+  assert.equal(normal.stops, 1);
+  near(normal.stopTimeS, 56);
+  assert.equal(runwave.stops, 0);
+  assert.ok(runwave.minBpm >= 150 && runwave.maxBpm <= 170);
+});
+
+test('改定案: 全位相・両モデルで RUNWAVE は止まらない', () => {
+  for (const model of ['point', 'length']) {
+    for (let p = 0; p < 120; p++) assert.equal(compare(withModel(withPhase(SCENARIOS_800M.A, p), model)).runwave.stops, 0, `${model} 位相${p}`);
+  }
+});
+
+test('改定案: 通過するときに、15m を渡り切る以上の青が残っている（終了前8秒の余裕）', () => {
+  for (let p = 0; p < 120; p++) {
+    const cfg = withPhase(SCENARIOS_800M.A, p);
+    const tr = trace(cfg);
+    const i = tr.findIndex((s, k) => k > 0 && tr[k - 1].phase === 'approach' && s.phase !== 'approach');
+    if (tr[i].phase === 'waiting' || tr[i].stops > tr[i - 1].stops) continue;
+    const v = 0.8 * tr[i].bpm / 60;
+    const at = tr[i - 1].t + (cfg.route.crossingX - tr[i - 1].x) / v;
+    const left = signalAt(cfg.signal, at).remainingS;
+    assert.ok(left >= 15 / v, `位相${p}: 青の残り ${left} < 横断 ${(15 / v).toFixed(2)}`);
+  }
+});
+
+test('改定案のデモ: 通常は止まり RUNWAVE は止まらない。位相±5秒でも成立', () => {
+  for (const cfg of [DEMO_800M.main, DEMO_800M.sub]) {
     for (let d = -5; d <= 5; d++) {
       const { normal, runwave } = compare(withPhase(cfg, cfg.signal.phaseS + d));
       assert.equal(normal.stops, 1);

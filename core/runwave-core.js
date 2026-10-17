@@ -22,7 +22,7 @@ export const DEFAULT_CONTROL = {
   enabled: true,
   crossingModel: 'point', // point: 横断地点での通過判定（v4 の現行 CONTRACT）／length: 横断長を渡り切る時間も扱う（拡張・要合意）
   startMarginS: 3,     // 青開始から何秒後以降に着くよう狙うか
-  endMarginS: 5,       // 青終了の何秒前までに通過（length では渡り切り）するよう狙うか
+  endMarginS: 8,       // 青終了の何秒前までに通過（length では渡り切り）するよう狙うか。15〜20m を渡り切る時間（約7〜9秒）を確保
   maxDeltaBpm: 20,     // 通常BPM±この範囲
   stepBpm: 2,          // 1回の変更量の上限
   stepIntervalS: 4,    // BPM を変えられる間隔（変更は t = 4k 秒のときだけ）

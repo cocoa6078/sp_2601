@@ -20,3 +20,23 @@ export const DEMO = {
 
 export const withCrossing = (config, crossingM) => ({ ...config, signal: { ...config.signal, crossingM } });
 export const withModel = (config, crossingModel) => ({ ...config, control: { ...config.control, crossingModel } });
+
+// ---------- 改定案（10/17・未合意）：横断地点 800m・余裕 開始後3秒/終了前8秒・横断長15m ----------
+// 400m では ±20BPM で到着をずらせる幅が約48秒しかなく、位相120通りのうち30通りで止まるのが避けられない。
+// 800m なら全120通りで RUNWAVE は止まらない（point・length とも。モデル上）。
+// 終了前8秒は、15m を渡り切るのに必要な時間（約7〜8秒）を青の残りで確保するため。
+// ダッシュボード（frontend/dev-dashboard）は SCENARIOS / DEMO を前提にしたテストがあるので、
+// 切り替えは担当者と確認してから行う（docs の変更確認リスト参照）
+const base800 = {
+  runner: { strideM: 0.8, baseBpm: 150 },
+  route: { crossingX: 800, goalX: 1000 },
+  control: { startMarginS: 3, endMarginS: 8, maxDeltaBpm: 20, stepBpm: 2, stepIntervalS: 4, targetIntervalS: 1 },
+};
+export const SCENARIOS_800M = {
+  A: { ...base800, signal: signal(59, 15) },   // 減速で停止を回避（減速で回避できる位相 43〜75 の中央）
+  B: { ...base800, signal: signal(24, 15) },   // 加速で停止を回避（加速で回避できる位相 15〜32 の中央）
+};
+export const DEMO_800M = {
+  main: SCENARIOS_800M.B,
+  sub: SCENARIOS_800M.A,
+};
