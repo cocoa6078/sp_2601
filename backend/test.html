@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>RUNWAVE Backend API Manual Test</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      margin: 20px auto;
+      max-width: 900px;
+      line-height: 1.5;
+      background: #f8fafc;
+      color: #0f172a;
+    }
+    h1 { font-size: 20px; border-bottom: 2px solid #0284c7; padding-bottom: 8px; }
+    h2 { font-size: 16px; margin-top: 20px; color: #0369a1; }
+    .card {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    button {
+      background: #0284c7;
+      color: #fff;
+      border: none;
+      padding: 8px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    button:hover { background: #0369a1; }
+    input {
+      padding: 6px 10px;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      margin-right: 8px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+      font-size: 14px;
+    }
+    th, td {
+      border: 1px solid #cbd5e1;
+      padding: 6px 10px;
+      text-align: left;
+    }
+    th { background: #f1f5f9; }
+    .num { text-align: right; }
+    .res-box {
+      margin-top: 10px;
+      padding: 10px;
+      background: #f1f5f9;
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 13px;
+      white-space: pre-wrap;
+      max-height: 250px;
+      overflow-y: auto;
+    }
+    .ok { color: #15803d; font-weight: bold; }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #e0f2fe;
+      color: #0369a1;
+      font-size: 12px;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <h1>🏃 RUNWAVE バックエンド手動統合テスト (Manual Integration Test)</h1>
+  <p style="color: #64748b; font-size: 14px;">
+    ブラウザの開発者ツール (F12) の <strong>[Network]</strong> タブを開いた状態で各テストを実行してください。
+  </p>
+
+  <!-- 1. 信号データ & 累積距離 -->
+  <div class="card">
+    <h2>① 信号データ & 動的累積距離確認 (GET /api/signals)</h2>
+    <p style="font-size: 13px; color: #64748b;">
+      スクレイピング座標からハーバーサイン公式で計算された <code>distanceFromStartM</code> が 0 ではなく動的に入っているか確認します。
+    </p>
+    <button id="btn-get-signals">GET /api/signals 実行</button>
+    <div id="signals-table-box"></div>
+  </div>
+
+  <!-- 2. キャリブレーション -->
+  <div class="card">
+    <h2>② キャリブレーション送受信確認 (POST & GET /api/calibration)</h2>
+    <div style="margin-bottom: 8px; font-size: 14px;">
+      <label>歩幅(m): <input type="number" id="inp-stride" value="0.8" step="0.01" style="width: 80px;"></label>
+      <label>通常BPM: <input type="number" id="inp-bpm" value="150" style="width: 80px;"></label>
+      <label>早歩き歩幅(m): <input type="number" id="inp-walk" value="0.75" step="0.01" style="width: 80px;"></label>
+    </div>
+    <button id="btn-post-calib">POST /api/calibration 送信</button>
+    <button id="btn-get-calib" style="background:#64748b;">GET /api/calibration 確認</button>
+    <div id="calib-res" class="res-box" style="display: none;"></div>
+  </div>
+
+  <!-- 3. 早歩き走行ログ -->
+  <div class="card">
+    <h2>③ 早歩き走行ログ送信 & 永続化確認 (POST /api/logs)</h2>
+    <p style="font-size: 13px; color: #64748b;">
+      <code>gait: "walk"</code> や <code>walkCount</code>, <code>walkTimeS</code>, <code>walkDistanceM</code> を含むログを送信し、サーバーの <code>logs.json</code> への保存を確認します。
+    </p>
+    <button id="btn-post-log">POST /api/logs 送信</button>
+    <button id="btn-get-logs" style="background:#64748b;">GET /api/logs 全ログ確認</button>
+    <div id="log-res" class="res-box" style="display: none;"></div>
+  </div>
+
+  <script>
+    // ① signals
+    document.getElementById('btn-get-signals').addEventListener('click', async () => {
+      const box = document.getElementById('signals-table-box');
+      box.innerHTML = '<p>取得中...</p>';
+      try {
+        const res = await fetch('/api/signals');
+        const json = await res.json();
+        let html = `<table>
+          <thead>
+            <tr>
+              <th>signalId</th>
+              <th>緯度 (lat)</th>
+              <th>経度 (lon)</th>
+              <th class="num">累積距離 (distanceFromStartM)</th>
+              <th>周期 (青/黄/赤)</th>
+            </tr>
+          </thead>
+          <tbody>`;
+        json.データ.forEach(s => {
+          html += `<tr>
+            <td><strong>${s.signalId}</strong></td>
+            <td>${s.lat}</td>
+            <td>${s.lon}</td>
+            <td class="num"><span class="badge">${s.distanceFromStartM} m</span></td>
+            <td>青 ${s.greenS}s / 黄 ${s.yellowS}s / 赤 ${s.redS}s</td>
+          </tr>`;
+        });
+        html += `</tbody></table>`;
+        box.innerHTML = html;
+      } catch (err) {
+        box.innerHTML = `<span style="color:red;">エラー: ${err.message}</span>`;
+      }
+    });
+
+    // ② calibration
+    document.getElementById('btn-post-calib').addEventListener('click', async () => {
+      const box = document.getElementById('calib-res');
+      box.style.display = 'block';
+      box.innerText = '送信中...';
+      try {
+        const payload = {
+          歩幅: Number(document.getElementById('inp-stride').value),
+          通常BPM: Number(document.getElementById('inp-bpm').value),
+          walkStrideM: Number(document.getElementById('inp-walk').value)
+        };
+        const res = await fetch('/api/calibration', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const json = await res.json();
+        box.innerText = `[POST 200 OK]\n` + JSON.stringify(json, null, 2);
+      } catch (err) {
+        box.innerText = `エラー: ${err.message}`;
+      }
+    });
+
+    document.getElementById('btn-get-calib').addEventListener('click', async () => {
+      const box = document.getElementById('calib-res');
+      box.style.display = 'block';
+      try {
+        const res = await fetch('/api/calibration');
+        const json = await res.json();
+        box.innerText = `[GET 200 OK]\n` + JSON.stringify(json, null, 2);
+      } catch (err) {
+        box.innerText = `エラー: ${err.message}`;
+      }
+    });
+
+    // ③ logs
+    document.getElementById('btn-post-log').addEventListener('click', async () => {
+      const box = document.getElementById('log-res');
+      box.style.display = 'block';
+      box.innerText = '送信中...';
+      try {
+        const payload = {
+          signalId: "sapporo_3",
+          シナリオ: "手動ブラウザテスト",
+          gait: "walk",
+          walkCount: 1,
+          walkTimeS: 12.0,
+          walkDistanceM: 18.5,
+          history: [
+            { t: 0, x: 0, bpm: 150, targetBpm: 150, mode: "normal", color: "green" },
+            { t: 10, x: 20, bpm: 120, targetBpm: 120, mode: "walk", color: "yellow" }
+          ]
+        };
+        const res = await fetch('/api/logs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const json = await res.json();
+        box.innerText = `[POST 201 Created]\n` + JSON.stringify(json, null, 2);
+      } catch (err) {
+        box.innerText = `エラー: ${err.message}`;
+      }
+    });
+
+    document.getElementById('btn-get-logs').addEventListener('click', async () => {
+      const box = document.getElementById('log-res');
+      box.style.display = 'block';
+      try {
+        const res = await fetch('/api/logs');
+        const json = await res.json();
+        box.innerText = `[GET 200 OK]\n` + JSON.stringify(json, null, 2);
+      } catch (err) {
+        box.innerText = `エラー: ${err.message}`;
+      }
+    });
+  </script>
+</body>
+</html>

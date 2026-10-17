@@ -29,11 +29,11 @@ function calculateDistanceM(lat1, lon1, lat2, lon2) {
 // ---------------------------------------------------------
 const logsFilePath = path.join(__dirname, 'logs.json');
 
-// キャリブレーション設定データの初期値（早歩き歩幅を追加）
+// キャリブレーション設定データの初期値（通常BPMキー統一、早歩き歩幅を追加）
 let userCalibrationData = { 
-  "歩幅": 0.8, 
-  "通常BPM": 150, 
-  "walkStrideM": 0.75 
+  歩幅: 0.8, 
+  通常BPM: 150, 
+  walkStrideM: 0.75 
 };
 let runLogs = [];
 
@@ -65,8 +65,6 @@ try {
   let coordMap = {};
   if (fs.existsSync(scrapedCoordPath)) {
     const scrapedData = JSON.parse(fs.readFileSync(scrapedCoordPath, 'utf-8'));
-    // 地域インデックス（page_id）と交差点番号をキーにして緯度経度をマップ化
-    // page_id: 1=札幌方面, 2=旭川方面, 3=函館方面, 4=釧路方面, 5=北見方面 の順序に対応
     const pageIdToRegion = { 1: "札幌方面", 2: "旭川方面", 3: "函館方面", 4: "釧路方面", 5: "北見方面" };
     scrapedData.forEach(item => {
       const regionName = pageIdToRegion[item.page_id];
@@ -83,7 +81,6 @@ try {
     const redS = signal["赤信号時間"];
     const cycleS = greenS + yellowS + redS; 
 
-    // スクレイピングで取得した正確な座標があれば上書き、なければ元の値を使用
     const coordKey = `${signal["地域"]}_${signal["交差点番号"]}`;
     const preciseCoord = coordMap[coordKey];
     const lat = preciseCoord ? preciseCoord.lat : signal["緯度"];
@@ -112,11 +109,9 @@ try {
     signal["地域"] === "札幌方面" && targetIds.includes(signal["交差点番号"])
   );
 
-  // 指定順序 (3 -> 8 -> 2 -> 1 -> 5) でソート
   const orderMap = { 3: 1, 8: 2, 2: 3, 1: 4, 5: 5 };
   filteredData.sort((a, b) => orderMap[a["交差点番号"]] - orderMap[b["交差点番号"]]);
 
-  // デモ用配列の生成（ハーバーサイン公式による動的距離計算版：正確な座標を使用）
   let accumulatedDistance = 0;
   signalsData = filteredData.map((signal, index) => {
     const greenS = Math.max(0, signal["青信号時間"] - 5);
@@ -125,7 +120,6 @@ try {
     const cycleS = greenS + yellowS + redS;
     const dynamicPhaseS = index * 15;
 
-    // 正確な座標を適用
     const coordKey = `${signal["地域"]}_${signal["交差点番号"]}`;
     const preciseCoord = coordMap[coordKey];
     const lat = preciseCoord ? preciseCoord.lat : signal["緯度"];
@@ -144,7 +138,7 @@ try {
 
       const dist = calculateDistanceM(prevLat, prevLon, lat, lon);
       accumulatedDistance += dist;
-      distanceFromStartM = Math.round(accumulatedDistance); // 整数値に丸める
+      distanceFromStartM = Math.round(accumulatedDistance);
     }
 
     return {
@@ -152,7 +146,7 @@ try {
       orderIndex: index + 1,
       lat: lat,
       lon: lon,
-      distanceFromStartM: distanceFromStartM, // 動的計算された累積距離 (m)
+      distanceFromStartM: distanceFromStartM,
       cycleS: cycleS,
       greenS: greenS,
       yellowS: yellowS,
@@ -172,6 +166,16 @@ try {
 // 2. API エンドポイント
 // ---------------------------------------------------------
 
+// [GET] ブラウザ手動テスト用ページの配信 (/test)
+app.get('/test', (req, res) => {
+  const testHtmlPath = path.join(__dirname, 'test.html');
+  if (fs.existsSync(testHtmlPath)) {
+    res.sendFile(testHtmlPath);
+  } else {
+    res.status(404).send('test.html が backend ディレクトリに見つかりません。');
+  }
+});
+
 // [GET] デモ用データ取得
 app.get('/api/signals', (req, res) => {
   res.status(200).json({ ステータス: "成功", データ: signalsData });
@@ -186,7 +190,7 @@ app.get('/api/signals/all', (req, res) => {
   });
 });
 
-// [GET] 拡張用：地域別データ取得（例: /api/signals/region/函館方面）
+// [GET] 拡張用：地域別データ取得
 app.get('/api/signals/region/:region', (req, res) => {
   const targetRegion = req.params.region;
   const filtered = allSignalsDataF02.filter(s => s.region === targetRegion);
@@ -201,10 +205,8 @@ app.get('/api/signals/region/:region', (req, res) => {
 app.post('/api/calibration', (req, res) => {
   const body = req.body ?? {};
   const { 歩幅, 通常BPM, walkStrideM } = body;
-  
-  // キーの揺れ（NormalBPM または 通常BPM）を考慮した受取
   const targetBpm = 通常BPM !== undefined ? 通常BPM : body.NormalBPM;
-
+  
   if (typeof 歩幅 !== 'number' || 歩幅 <= 0 || typeof targetBpm !== 'number' || targetBpm <= 0) {
     return res.status(400).json({ ステータス: "エラー", メッセージ: "歩幅と通常BPMは正の数値である必要があります。" });
   }
@@ -214,9 +216,9 @@ app.post('/api/calibration', (req, res) => {
   }
 
   userCalibrationData = { 
-    "歩幅": 歩幅, 
-    "通常BPM": targetBpm, 
-    "walkStrideM": walkStrideM !== undefined ? walkStrideM : userCalibrationData.walkStrideM 
+    歩幅, 
+    通常BPM: targetBpm, 
+    walkStrideM: walkStrideM !== undefined ? walkStrideM : userCalibrationData.walkStrideM 
   };
 
   res.status(200).json({
@@ -291,9 +293,77 @@ app.get('/api/logs/:id', (req, res) => {
 app.get('/api/logs', (req, res) => {
   res.status(200).json({ ステータス: "成功", データ: runLogs });
 });
-
 // ---------------------------------------------------------
-// 3. エラーハンドリング
+// セッション別案内中継データストア (D1 / B1)
+// ---------------------------------------------------------
+const sessionGuidanceStore = new Map();
+
+// [PUT] セッション案内情報の保存 (Web -> API)
+app.put('/api/sessions/:sessionId/guidance', (req, res) => {
+  const sessionId = req.params.sessionId;
+  const body = req.body ?? {};
+
+  const { configVersion, guidanceSeq, createdAt, expiresAt, guidance, signal } = body;
+
+  if (guidanceSeq === undefined || typeof guidanceSeq !== 'number') {
+    return res.status(400).json({ ステータス: "エラー", メッセージ: "guidanceSeq（数値）は必須です。" });
+  }
+
+  // 古い書き込み・順序逆転の拒否 (guidanceSeq 比較)
+  const existing = sessionGuidanceStore.get(sessionId);
+  if (existing && existing.guidanceSeq >= guidanceSeq) {
+    return res.status(409).json({
+      ステータス: "競合",
+      メッセージ: `古い更新番号です。(現在: ${existing.guidanceSeq}, 送信: ${guidanceSeq})`
+    });
+  }
+
+  // 小数点ケイデンスを保持したオブジェクト構築
+  const guidanceData = {
+    sessionId,
+    configVersion: configVersion ?? 1,
+    guidanceSeq,
+    createdAt: createdAt || new Date().toISOString(),
+    expiresAt: expiresAt || null,
+    guidance: {
+      targetBpm: guidance?.targetBpm !== undefined ? Number(guidance.targetBpm) : 150.0,
+      gait: guidance?.gait || "run",
+      mode: guidance?.mode || "normal",
+      status: guidance?.status || "running"
+    },
+    signal: signal || null
+  };
+
+  sessionGuidanceStore.set(sessionId, guidanceData);
+
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.status(200).json({
+    ステータス: "成功",
+    データ: guidanceData
+  });
+});
+
+// [GET] セッション案内情報の取得 (iPhone -> API)
+app.get('/api/sessions/:sessionId/guidance', (req, res) => {
+  const sessionId = req.params.sessionId;
+  const guidanceData = sessionGuidanceStore.get(sessionId);
+
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+
+  if (!guidanceData) {
+    return res.status(404).json({
+      ステータス: "エラー",
+      メッセージ: `セッション [${sessionId}] の案内データが見つかりません。`
+    });
+  }
+
+  res.status(200).json({
+    ステータス: "成功",
+    データ: guidanceData
+  });
+});
+// ---------------------------------------------------------
+// 3. エラーハンドリング (必ずルート定義の最後に配置)
 // ---------------------------------------------------------
 
 // 404 エラーハンドリング
@@ -301,7 +371,7 @@ app.use((req, res, next) => {
   res.status(404).json({ ステータス: "エラー", メッセージ: "指定されたエンドポイントは見つかりません" });
 });
 
-// グローバルエラーハンドリング（JSONパース失敗等）
+// グローバルエラーハンドリング
 app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
     return res.status(400).json({ ステータス: "エラー", メッセージ: "無効なJSONフォーマットです" });
