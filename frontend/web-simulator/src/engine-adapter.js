@@ -175,6 +175,35 @@ export function runnerView(lane, commonT) {
   };
 }
 
+/** 時系列 1 行分（CSV 用）。位置 m・信号色・目標/現在 BPM・速度・状態。式は持たず core の state を読むだけ */
+export function sampleLane(lane, commonT) {
+  const { state, cfg } = lane;
+  const route = isRouteConfig(cfg);
+  const nSig = route ? cfg.signals.length : 1;
+  const idx = route ? Math.min(state.signalIndex, nSig - 1) : 0;
+  const curSignal = route ? cfg.signals[idx].signal : cfg.signal;
+  const waiting = state.phase === 'waiting';
+  const finished = !!state.finished;
+  let speedMps;
+  if (waiting || finished) speedMps = 0;
+  else if ('gait' in state) speedMps = state.speedMps;
+  else speedMps = (cfg.runner.strideM * state.bpm) / 60;
+  const passed = route ? state.signalIndex >= nSig : state.phase === 'after' || state.phase === 'finished';
+  let st = 'approach';
+  if (finished) st = 'finished';
+  else if (waiting) st = 'stopped';
+  else if (state.phase === 'crossing') st = 'crossing';
+  else if (passed) st = 'passed';
+  return {
+    xM: state.x,
+    signalColor: core.signalAt(curSignal, commonT).color,
+    targetBpm: state.targetBpm ?? null,
+    bpm: waiting || finished ? 0 : state.bpm,
+    speedMps,
+    state: st,
+  };
+}
+
 /** 次の青までの秒数（青なら 0、青点滅なら点滅残り＋赤、赤なら残り）。青区間が無ければ null。設計書 §5 */
 export function secondsToGreen(signal, t) {
   if (!(signal.greenS > 0)) return null;

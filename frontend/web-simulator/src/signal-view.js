@@ -3,6 +3,7 @@ import { COLOR_LABELS_FALLBACK } from './format.js';
 import { secondsToGreen } from './engine-adapter.js';
 import { core } from './core-ns.js';
 import { esc, f1 } from './format.js';
+import { ESTIMATED_LABEL, signalProvenance } from './provenance.js';
 
 export const colorLabel = (c) => core.COLOR_LABELS?.[c] ?? COLOR_LABELS_FALLBACK[c] ?? c;
 
@@ -38,6 +39,8 @@ export function signalDetailHtml(info, t) {
   const sig = core.signalAt(signal, t);
   const orig = Number.isFinite(info.lat) ? `${info.lat.toFixed(6)}, ${info.lng.toFixed(6)}` : '座標なし（模式）';
   const proj = info.projPoint ? `${info.projPoint.lat.toFixed(6)}, ${info.projPoint.lng.toFixed(6)}` : '—';
+  const pv = signalProvenance(info);
+  const opt = (label, v) => (v == null ? '' : `<span>${label}</span><b>${esc(v)}</b>`);
   return `<div class="sigdetail">
     <div class="sd-head">${colorBadge(sig)} <span class="sd-id">${esc(info.signalId)}</span> <span class="muted">${esc(info.originLabel ?? '')}</span></div>
     ${cycleBar(signal, sig)}
@@ -48,6 +51,8 @@ export function signalDetailHtml(info, t) {
       <span>位相 phaseS</span><b>${signal.phaseS}s（模擬時刻 0 に対する値）</b>
       <span>元座標</span><b>${orig}</b>
       <span>経路への投影位置</span><b>${proj}</b>
+      <span>データ区分</span><b>${pv.isEstimated ? ESTIMATED_LABEL : 'API: 推定ではない（isEstimated=false）'}</b>
+      ${opt('signalType', pv.signalType)}${opt('phaseBasis', pv.phaseBasis)}${opt('positionAccuracyM', pv.positionAccuracyM)}${opt('fetchedAt', pv.fetchedAt)}${opt('crossingDirection', pv.crossingDirection)}
       <span>次の青まで</span><b>${untilGreenText(signal, t)}（残り ${f1(sig.remainingS)} 秒で切替）</b>
     </div>
   </div>`;

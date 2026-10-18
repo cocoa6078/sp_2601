@@ -21,7 +21,7 @@ export function initialState() {
     manualExclude: new Set(),
     phaseS: null,                    // 位相の模擬条件編集（null = 元のまま）
     runnerOverride: null,            // API 校正値（適用したときだけ）
-    api: { base: DEFAULT_API_BASE, message: '', at: null, ok: null, calib: null },
+    api: { base: DEFAULT_API_BASE, message: '', at: null, ok: null, calib: null, signalsAt: null, signalsUrl: null, lastAttempt: null },
     // --- 確定した設定（recompute の結果）---
     route: null,
     routeErrors: [],

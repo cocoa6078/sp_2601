@@ -10,7 +10,8 @@ import { addVia, draftRoute, matchSignals, moveVia, removeVia, reorderVia } from
 import { buildRoute, pointAtDistance } from './route-geometry.js';
 import { expectedFor, isRouteConfig, matchesExpected, planFromMap, runnerView, summaryOf, versions } from './engine-adapter.js';
 import { fetchCalibration, fetchSignals } from './api.js';
-import { buildReport, reportFileName } from './report.js';
+import { buildReport, buildTimeSeriesCsv, csvFileName, reportFileName } from './report.js';
+import { ESTIMATED_LABEL, anyEstimated, apiFailureMessage, buildApiInfo } from './provenance.js';
 import { runnerCard } from './metrics-view.js';
 import { resultsHtml } from './comparison-view.js';
 import { signalDetailHtml } from './signal-view.js';
@@ -101,7 +102,14 @@ function originLabel() {
 /** 設定を適用して両走行を用意する（再生はまだしない） */
 function applyStart(switchView = true) {
   if (S.plan.kind !== 'single' && S.plan.kind !== 'route') return;
-  S.pb = new Playback(S.plan.config, { signalId: S.adopted[0]?.signalId ?? null });
+  try {
+    S.pb = new Playback(S.plan.config, { signalId: S.adopted[0]?.signalId ?? null });
+  } catch (e) {
+    S.pb = null;
+    S.error = `走行を開始できません: ${e.message}`;
+    renderAll();
+    return;
+  }
   S.autoPaused = false;
   if (switchView) S.view = 'run';
   mapView.clearRunners();
@@ -164,7 +172,8 @@ function renderAll() {
   const originText = S.courseKind === 'demo'
     ? '固定デモ（模式コース）。信号は既存シナリオの定義'
     : originLabel();
-  $('origin').textContent = `データ: ${originText} ｜ core ${core0}・route-core ${versions().routeVersion}（export 値）@ ${META.gitSha ? META.gitSha.slice(0, 7) : 'SHA 不明'}`;
+  const est = anyEstimated(S.adopted) ? `【${ESTIMATED_LABEL}】` : '';
+  $('origin').textContent = `${est}データ: ${originText} ｜ core ${core0}・route-core ${versions().routeVersion}（export 値）@ ${META.gitSha ? META.gitSha.slice(0, 7) : 'SHA 不明'}`;
   renderBar(st);
   renderSetup(st);
   $('setup-panel').hidden = S.view !== 'setup' || S.rec;
@@ -186,6 +195,7 @@ function renderBar(st) {
     <span class="clock" id="clock"></span>
     <span class="chip st-${st}" id="chip">${STATUS_LABEL[st]}</span>
     <span class="grow"></span>
+    <button class="btn setup-only" data-act="save-csv" ${pb ? '' : 'disabled'} title="時刻・位置・信号色・目標/現在 BPM・速度・停止/通過を CSV で保存">時系列 CSV を保存</button>
     <button class="btn setup-only" data-act="save" ${pb ? '' : 'disabled'} title="条件・経路・採用/除外・結果・イベントを JSON で保存">結果 JSON を保存</button>`;
 }
 
@@ -347,16 +357,35 @@ function saveReport() {
     pair: pb.pair,
     summaries,
     events: pb.events,
-    apiInfo: S.candidatesOrigin === 'api' ? { source: 'api', base: S.api.base, at: S.api.at } : { source: S.courseKind === 'demo' ? 'demo-scenario' : 'fixture', note: '模擬信号。実 API の成功応答ではない' },
+    apiInfo: currentApiInfo(),
     termination: done ? (pb.timedOut ? 'timeLimit' : 'finished') : 'incomplete',
     matches: done && S.expected ? matchesExpected(pb.pair, S.expected) : null,
   });
-  const blob = new Blob([JSON.stringify(rep, null, 2)], { type: 'application/json' });
+  download(JSON.stringify(rep, null, 2), 'application/json', reportFileName());
+}
+
+/** データの出所（結果 JSON と CSV で共通）。固定デモ・fixture は source='fixture'、取得失敗の記録は lastApiAttempt に残す */
+function currentApiInfo() {
+  const lastApiAttempt = S.api.lastAttempt;
+  if (S.candidatesOrigin === 'api') return buildApiInfo({ source: 'api', base: S.api.base, url: S.api.signalsUrl, at: S.api.signalsAt, note: '車両用データ由来・位相は仮の参考信号', lastApiAttempt });
+  const note = S.courseKind === 'demo' ? '固定デモ（模式コース）の信号。既存シナリオの定義で、実 API の成功応答ではない' : '模擬信号 fixture（推定データ）。実 API の成功応答ではない';
+  return buildApiInfo({ source: 'fixture', base: S.api.base, note, lastApiAttempt });
+}
+
+function download(text, type, name) {
+  const blob = new Blob([text], { type });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = reportFileName();
+  a.download = name;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+function saveCsv() {
+  const pb = S.pb;
+  if (!pb) return;
+  const info = currentApiInfo();
+  download(buildTimeSeriesCsv(pb.series, { source: info.source, isEstimated: anyEstimated(S.adopted) }), 'text/csv;charset=utf-8', csvFileName());
 }
 
 async function doApiSignals() {
@@ -364,12 +393,21 @@ async function doApiSignals() {
   renderAll();
   const r = await fetchSignals(S.api.base);
   S.api.at = r.at;
+  S.api.lastAttempt = { ok: r.ok, url: r.url ?? null, at: r.at, error: r.error ?? null };
   if (!r.ok) {
     S.api.ok = false;
-    S.api.message = `取得失敗 ${r.url ?? ''} ${r.at.slice(11, 19)}: ${r.error}。固定デモ／fixture はそのまま使えます（既存の条件は変更していません）。`;
-    renderAll();
+    // 取得失敗時は黙って API 候補を残さず、fixture（推定データ）に戻して明示する
+    S.candidates = FIXTURE_SIGNALS;
+    S.candidatesOrigin = 'fixture';
+    S.manualExclude = new Set();
+    S.phaseS = null;
+    S.api.message = apiFailureMessage('参考信号', r, { usingFixture: true });
+    if (S.courseKind === 'map' && S.confirmed) recompute();
+    else renderAll();
     return;
   }
+  S.api.signalsAt = r.at;
+  S.api.signalsUrl = r.url;
   S.api.ok = true;
   S.api.message = `取得成功 ${r.url} ${r.at.slice(11, 19)}: 候補 ${r.candidates.length} 件${r.invalid.length ? `（不正 ${r.invalid.length} 件は除外）` : ''}。「地図でコース作成」で近い信号を対応付けます。`;
   S.candidates = r.candidates;
@@ -386,7 +424,7 @@ async function doApiCalib() {
   if (!r.ok) {
     S.api.ok = false;
     S.api.calib = null;
-    S.api.message = `校正値の取得失敗 ${r.url ?? ''}: ${r.error}`;
+    S.api.message = `${apiFailureMessage('校正値', r, { usingFixture: false })} 校正値は適用されず、既定の走者設定のままです。`;
   } else {
     S.api.ok = true;
     S.api.calib = r.runner;
@@ -406,6 +444,7 @@ function onClick(e) {
     case 'reset': pb?.reset(); mapView.clearRunners(); renderAll(); break;
     case 'speed': pb?.setSpeed(Number(el.dataset.v)); renderBar(statusOf(S)); break;
     case 'save': saveReport(); break;
+    case 'save-csv': saveCsv(); break;
     case 'tool': S.editTool = S.editTool === el.dataset.v ? null : el.dataset.v; mapView.setEditMode(S.editTool); renderAll(); break;
     case 'undo':
       if (S.draft.via.length) S.draft = removeVia(S.draft, S.draft.via.length - 1);
@@ -483,14 +522,21 @@ let last = performance.now();
 function loop(now) {
   const dt = (now - last) / 1000;
   last = now;
+  requestAnimationFrame(loop);
   const pb = S.pb;
   if (pb && pb.status === 'playing') {
-    const before = pb.status;
-    const n = pb.frame(dt);
-    if (n > 0 || pb.lagging) renderLive();
-    if (pb.status !== before) renderAll();
+    try {
+      const before = pb.status;
+      const n = pb.frame(dt);
+      if (n > 0 || pb.lagging) renderLive();
+      if (pb.status !== before) renderAll();
+    } catch (e) {
+      // 計算・描画で例外が出ても画面を止めない。理由を出して一時停止する
+      pb.pause();
+      S.error = `計算中にエラー: ${e.message}`;
+      renderAll();
+    }
   }
-  requestAnimationFrame(loop);
 }
 
 // 起動: 即再生可能な固定デモ B（API 取得を起動条件にしない）

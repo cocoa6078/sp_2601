@@ -3,6 +3,7 @@
 // POST /api/logs は使わない（結果は JSON をローカル保存）。
 import { DEFAULT_API_BASE, DEFAULT_TIMEOUT_MS, buildUrl } from '../../dev-dashboard/src/api-client.js';
 import { adapterNs, core } from './core-ns.js';
+import { pickApiMeta } from './provenance.js';
 
 export { DEFAULT_API_BASE, DEFAULT_TIMEOUT_MS };
 
@@ -83,6 +84,7 @@ export async function fetchSignals(base, opts = {}) {
       lng: it.lon ?? NaN,
       signal: it.signal,
       origin: 'api',
+      apiMeta: pickApiMeta(raw),   // 出所表示用（API が返した項目をそのまま。無ければ null）
       note: it.note ?? '車両用データ由来・位相は仮の参考信号',
     });
   });
