@@ -3,8 +3,8 @@
 //   "run-start" … 走行開始（模擬時刻 0）が基準。core にそのまま渡せる
 //   "unix-epoch" … Unix 時刻 0 が基準。走行開始の Unix 秒 runStartUnixS を足して周期で折り返す
 //   未指定 … run-start 扱い
-// core / api-adapter / route-core のどれかに toCorePhaseS が export されていれば、それを優先する【仮】
-// （引数は (signal, runStartUnixS) と想定。core 側の署名が決まったら合わせる）。無ければ自前で換算する。
+// 換算は core の toCorePhaseS(signal, runStartUnixS)（v0.5.1 で core/api-adapter.js に追加）を使う。
+// core / api-adapter / route-core の順に探し、見つからない古い core のときだけ同じ規則の自前換算に戻る。
 import { core, adapterNs, routeNs } from './core-ns.js';
 
 export const PHASE_REFERENCES = ['run-start', 'unix-epoch'];
