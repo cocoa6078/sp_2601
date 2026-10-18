@@ -39,7 +39,8 @@ test('extractSignals: ガイドの形 { ステータス: 成功, データ: [...
   const [r] = extractSignals(json);
   assert.deepEqual(r.problems, []);
   assert.equal(r.id, 'sapporo_3');
-  assert.deepEqual(r.signal, { cycleS: 125, greenS: 39, yellowS: 5, redS: 81, phaseS: 0, crossingM: 15 });
+  // 品質の項目（isEstimated・phaseBasis）が無い信号は推定として扱う（欠損は加速しない側。要件 v2 SAFE-03・core v0.5.1）
+  assert.deepEqual(r.signal, { cycleS: 125, greenS: 39, yellowS: 5, redS: 81, phaseS: 0, crossingM: 15, isEstimated: true });
   assert.ok(extractSignals({ 'ステータス': '失敗', 'データ': [] })[0].problems.some((p) => p.includes('失敗')));
 });
 

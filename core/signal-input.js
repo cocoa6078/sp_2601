@@ -20,7 +20,7 @@ export function phaseAtRunStart({ phaseS, cycleS, phaseReference }, runStartUnix
   if (!num(cycleS) || cycleS <= 0) throw new RangeError('cycleS は正の数');
   if (!PHASE_REFERENCES.includes(phaseReference)) throw new RangeError(`phaseReference は ${PHASE_REFERENCES.join(' / ')}`);
   if (phaseReference === 'run-start') return phaseS;
-  if (!num(runStartUnixS)) throw new RangeError("phaseReference が 'unix-epoch' のときは走行開始の UNIX 秒が必要");
+  if (!num(runStartUnixS)) throw new RangeError("phaseReference が 'unix-epoch' のときは runStartUnixS（走行開始の UNIX 秒）が必要");
   const r = (runStartUnixS + phaseS) % cycleS;
   return r < 0 ? r + cycleS : r;
 }

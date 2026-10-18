@@ -85,6 +85,10 @@
 - 再開の例外、安全余裕の適用範囲（規則5・7）
 - 候補の「変化が小さい」の基準（今は通常BPMとの差）
 
+## v0.5.1（10/18）
+- **不具合修正**：`api-adapter.js` の `extractSignals` が信号を数値6項目だけにしていて、推定フラグが落ちていた（Web の1信号で推定データでも加速していた）。`isEstimated`・`phaseBasis`・`phaseReference` を信号に残す。品質の項目が1つも無い信号は推定として扱う（欠損は加速しない側）。phaseReference が不明な信号は使わない
+- `api-adapter.js` に `toCorePhaseS(signal, runStartUnixS)`（Web の phase.js が探す名前）。phaseReference が無ければ 'run-start'
+
 ## v0.5.0（10/18・完成要件 v2 の一部）
 - **`yellowS` = 歩行者の青点滅の区間**（`[greenS, greenS+yellowS)`、color は `flashing`）。車両の黄ではない。名前は当面変えない
 - **走りの下限（PACE-03）**：`max(80, 通常BPM − maxDeltaBpm)`。通常BPMが80未満なら通常BPM。推定データで減速するときの下限も同じ。`core/signal-input.js` の `runLowBpm`・`MIN_RUN_BPM`

@@ -4,7 +4,7 @@
 
 import { runLowBpm, isEstimatedSignal } from './signal-input.js';
 
-export const CORE_VERSION = '0.5.0';
+export const CORE_VERSION = '0.5.1';
 export const DT = 0.1;          // 固定刻み（秒）。可変 dt には対応しない
 const TPS = 10;                 // ticks per second（t = tick / TPS で浮動小数誤差を避ける）
 
