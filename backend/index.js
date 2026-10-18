@@ -40,7 +40,8 @@ function withQuality(signal, phaseBasisNote, phaseReference) {
     phaseBasisNote,
     positionAccuracyM: null,        // 位置精度は不明
     fetchedAt: null,                // 元データの取得日時が不明
-    crossingDirection: null         // 横断方向は未確認
+    crossingDirection: null,         // 横断方向は未確認
+    quality: phaseBasis          // 品質は位置情報のみ
   };
 }
 const PHASE_NOTE_DEMO = "位相は仮値（信号の並び順に15秒ずつずらした値）。実測ではありません。";
@@ -48,8 +49,8 @@ const PHASE_NOTE_ALL = "位相は仮値（phaseS=0 固定）。実測ではあ�
 
 // along-route の match に載せる品質項目を信号から取り出す
 function pickQuality(signal) {
-  const { signalType, phaseBasis, phaseReference, phaseBasisNote, positionAccuracyM, fetchedAt, crossingDirection } = signal;
-  return { signalType, phaseBasis, phaseReference, phaseBasisNote, positionAccuracyM, fetchedAt, crossingDirection };
+  const { signalType, phaseBasis, phaseReference, phaseBasisNote, positionAccuracyM, fetchedAt, crossingDirection, quality } = signal;
+  return { signalType, phaseBasis, phaseReference, phaseBasisNote, positionAccuracyM, fetchedAt, crossingDirection, quality };
 }
 
 // 成功レスポンス: 日本語キーは残し、英語 status:"ok" と generatedAt を追加
@@ -460,10 +461,10 @@ app.post('/api/signals/along-route', (req, res) => {
   const corridorM = Number(body.corridorM) || 30;
 
   if (!route || route.type !== 'LineString' || !Array.isArray(route.coordinates)) {
-    return sendError(res, 400, "INVALID_INPUT", "GeoJSON LineString format is required.");
+    return sendError(res, 400, "INVALID_ROUTE_GEOMETRY", "GeoJSON LineString format is required.");
   }
   if (route.coordinates.length < 2 || route.coordinates.length > 1000) {
-    return sendError(res, 400, "INVALID_INPUT", "Coordinate points must be between 2 and 1000.");
+    return sendError(res, 400, "INVALID_ROUTE_GEOMETRY", "Coordinate points must be between 2 and 1000.");
   }
 
   if (!allSignalsDataF02 || allSignalsDataF02.length === 0) {
