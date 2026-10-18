@@ -3,10 +3,62 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+// ---------------------------------------------------------
+// セキュリティの共通設定
+// ---------------------------------------------------------
+// S1: サーバーの種類を出さない・基本の防御ヘッダー
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('X-Frame-Options', 'DENY');
+  res.set('Referrer-Policy', 'no-referrer');
+  next();
+});
+// S1: CORS の許可元。環境変数 CORS_ORIGINS（カンマ区切り）があればそれだけ許可。無ければ従来どおり全許可
+const corsOrigins = (process.env.CORS_ORIGINS || '').split(',').map((o) => o.trim()).filter(Boolean);
+app.use(cors(corsOrigins.length ? { origin: corsOrigins } : {}));
+// 本文の大きさの上限（express.json の既定と同じ 100KB を明示。新しい制限ではない）
+app.use(express.json({ limit: '100kb' }));
+
+// S2: 公開デモでは、全員共通の値の書き換え・ログの閲覧・案内の中継を止める。
+// Vercel（本番）では既定で有効（明示的に DEMO_READONLY=0 のときだけ無効）。手元では DEMO_READONLY=1 で有効
+const DEMO_READONLY = process.env.DEMO_READONLY === '1' || (process.env.VERCEL === '1' && process.env.DEMO_READONLY !== '0');
+function denyInDemo(req, res, next) {
+  if (DEMO_READONLY) return sendError(res, 403, "READ_ONLY", "デモ環境ではこの操作は無効です");
+  next();
+}
+
+// S3: レート制限（IP ごと・1分あたり）。メモリ上なのでサーバーレスではインスタンスごと
+// IP は X-Forwarded-For の先頭（Vercel はこのヘッダーを上書きして偽装を防ぐ：公式資料）。ほかの転送ヘッダーは信用しない
+function clientIp(req) {
+  const fwd = req.headers['x-forwarded-for'];
+  if (typeof fwd === 'string' && fwd.length) return fwd.split(',')[0].trim().slice(0, 64);
+  return req.socket.remoteAddress || 'unknown';
+}
+const RATE_KEYS_MAX = Number(process.env.RUNWAVE_RATE_KEYS_MAX) || 10000; // テストでは環境変数で小さくする
+function rateLimit(max, windowMs = 60000) {
+  const hits = new Map();
+  return (req, res, next) => {
+    const now = Date.now();
+    const key = clientIp(req);
+    let r = hits.get(key);
+    if (!r || now - r.windowStart > windowMs) {
+      if (!r && hits.size >= RATE_KEYS_MAX) {
+        // 期限の過ぎた記録だけを消す（全員分を消すと、偽の IP を大量に送るだけで制限を外せてしまう）
+        for (const [k, v] of hits) if (now - v.windowStart > windowMs) hits.delete(k);
+        if (hits.size >= RATE_KEYS_MAX) return sendError(res, 429, "RATE_LIMITED", "リクエストが多すぎます。しばらく待ってください");
+      }
+      r = { windowStart: now, count: 0 };
+      hits.set(key, r);
+    }
+    r.count++;
+    if (r.count > max) return sendError(res, 429, "RATE_LIMITED", "リクエストが多すぎます。しばらく待ってください");
+    next();
+  };
+}
 
 // 2点間の緯度経度から実際の直線距離（メートル）を算出するハーバーサイン公式
 function calculateDistanceM(lat1, lon1, lat2, lon2) {
@@ -77,7 +129,7 @@ function sendError(res, httpStatus, code, message, jpStatus = "エラー") {
 // 0. ファイルパスおよびストレージの初期設定
 // ---------------------------------------------------------
 const isVercel = process.env.VERCEL === '1';
-const logsFilePath = isVercel 
+const logsFilePath = process.env.RUNWAVE_LOGS_FILE ? process.env.RUNWAVE_LOGS_FILE : isVercel 
   ? path.join('/tmp', 'logs.json') 
   : path.join(__dirname, 'logs.json');
 
@@ -254,16 +306,17 @@ app.get('/api/signals/region/:region', (req, res) => {
 });
 
 // [POST] キャリブレーションの保存
-app.post('/api/calibration', (req, res) => {
+app.post('/api/calibration', denyInDemo, rateLimit(30), (req, res) => {
   const body = req.body ?? {};
   const { 歩幅, 通常BPM, walkStrideM } = body;
   const targetBpm = 通常BPM !== undefined ? 通常BPM : body.NormalBPM;
   
-  if (typeof 歩幅 !== 'number' || 歩幅 <= 0 || typeof targetBpm !== 'number' || targetBpm <= 0) {
-    return sendError(res, 400, "INVALID_INPUT", "歩幅と通常BPMは正の数値である必要があります。");
+  const strideOk = (v) => typeof v === 'number' && Number.isFinite(v) && v > 0 && v <= 3;
+  if (!strideOk(歩幅) || typeof targetBpm !== 'number' || !Number.isFinite(targetBpm) || targetBpm < 60 || targetBpm > 220) {
+    return sendError(res, 400, "INVALID_INPUT", "歩幅（0〜3m）と通常BPM（60〜220）は有限の数値である必要があります。");
   }
 
-  if (walkStrideM !== undefined && (typeof walkStrideM !== 'number' || walkStrideM <= 0)) {
+  if (walkStrideM !== undefined && !strideOk(walkStrideM)) {
     return sendError(res, 400, "INVALID_INPUT", "早歩きの歩幅は正の数値である必要があります。");
   }
 
@@ -285,9 +338,39 @@ app.get('/api/calibration', (req, res) => {
 });
 
 // [POST] 走行ログの保存
-app.post('/api/logs', (req, res) => {
-  const logData = req.body ?? {};
-  
+// S4: 保存する項目を決める（送られた項目を何でも保存しない）。文字列は長さを制限する
+const LOG_FIELDS = ['シナリオ', '停止回数', '総所要時間', '停止時間', 'gait', 'walkCount', 'walkTimeS', 'walkDistanceM'];
+function pickLog(body) {
+  const out = {};
+  for (const k of LOG_FIELDS) {
+    const v = body[k];
+    if (v === undefined) continue;
+    if (typeof v === 'number' && Number.isFinite(v)) out[k] = v;
+    else if (typeof v === 'string') out[k] = v.slice(0, 100);
+  }
+  return out;
+}
+
+// 既知の項目は保存の前に元の値で検査する（不正な値を黙って落として成功させない）
+const LOG_COUNTS = ['停止回数', 'walkCount'];
+const LOG_MEASURES = ['総所要時間', '停止時間', 'walkTimeS', 'walkDistanceM'];
+function invalidLog(body) {
+  if (body['シナリオ'] !== undefined && typeof body['シナリオ'] !== 'string') return "シナリオは文字列です";
+  if (body.gait !== undefined && !['run', 'walk'].includes(body.gait)) return "gaitは run または walk である必要があります。";
+  if (LOG_COUNTS.some((k) => body[k] !== undefined && (!Number.isSafeInteger(body[k]) || body[k] < 0))) return "回数は0以上の整数です";
+  if (LOG_MEASURES.some((k) => body[k] !== undefined && (typeof body[k] !== 'number' || !Number.isFinite(body[k]) || body[k] < 0))) return "時間・距離は0以上の数値です";
+  return null;
+}
+
+app.post('/api/logs', denyInDemo, rateLimit(30), (req, res) => {
+  const body = req.body ?? {};
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return sendError(res, 400, "INVALID_INPUT", "データはオブジェクトである必要があります");
+  }
+  const bad = invalidLog(body);
+  if (bad) return sendError(res, 400, "INVALID_INPUT", bad);
+  const logData = pickLog(body);
+
   if (Object.keys(logData).length === 0) {
     return sendError(res, 400, "INVALID_INPUT", "データが空です");
   }
@@ -312,6 +395,7 @@ app.post('/api/logs', (req, res) => {
   };
   
   runLogs.push(newLog);
+  if (runLogs.length > 1000) runLogs = runLogs.slice(-1000); // S4: 保存件数の上限
 
   try {
     fs.writeFileSync(logsFilePath, JSON.stringify(runLogs, null, 2), 'utf-8');
@@ -327,7 +411,7 @@ app.post('/api/logs', (req, res) => {
 });
 
 // [GET] 走行ログ単件取得
-app.get('/api/logs/:id', (req, res) => {
+app.get('/api/logs/:id', denyInDemo, (req, res) => {
   const logId = req.params.id;
   const targetLog = runLogs.find(log => log.id === logId);
 
@@ -342,7 +426,7 @@ app.get('/api/logs/:id', (req, res) => {
 });
 
 // [GET] 走行ログ一覧の取得
-app.get('/api/logs', (req, res) => {
+app.get('/api/logs', denyInDemo, (req, res) => {
   sendOk(res, { ステータス: "成功", データ: runLogs });
 });
 
@@ -350,17 +434,94 @@ app.get('/api/logs', (req, res) => {
 // セッション別案内中継データストア (D1 / B1)
 // ---------------------------------------------------------
 const sessionGuidanceStore = new Map();
+// S2: 公開デモでは案内の中継を閉じる（まだどのアプリも使っていない。サーバーレスではセッションの状態がインスタンスごとで、
+// 書き込みトークンでも持ち主を保証できないため）
+app.all('/api/sessions/:sessionId/guidance', denyInDemo);
+// S5: セッションごとの書き込みトークン（最初の PUT で発行。GET では返さない）。{ token, at }
+const sessionTokens = new Map();
+const MAX_SESSIONS = 1000;
+const TOKEN_KEEP_MS = 60 * 60 * 1000;      // 持ち主の記録は1時間残す（すぐ消すと、同じ ID を別人が初回 PUT で取れる）
+const GUIDANCE_DEFAULT_MS = 5 * 60 * 1000;  // 期限を省いた案内は5分
+const GUIDANCE_MAX_MS = 10 * 60 * 1000;     // 期限は最長10分先まで
+// S6: sessionId の形（16〜64文字の英数字・-・_）。推測しにくさは呼ぶ側が crypto.randomUUID() などで作ることが前提
+const SESSION_ID_RE = /^[A-Za-z0-9_-]{16,64}$/;
+// S7: 案内の値の範囲（core と同じ mode の一覧。BPM は 60〜220）
+const GUIDANCE_GAITS = ['run', 'walk'];
+const GUIDANCE_MODES = ['normal', 'adjusting', 'walking', 'stopRecommended', 'waiting', 'finished'];
+// 日時は ISO 8601 の形だけ（Date.parse は "1" なども受け付けるため）
+const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/;
+const isIsoDate = (v) => typeof v === 'string' && ISO_RE.test(v) && Number.isFinite(Date.parse(v));
+// 案内に載せる signal は浅いオブジェクトだけ（深いオブジェクトで応答の JSON 化が失敗していた）
+// キー名は32文字まで・数は有限（生 JSON の 1e309 を通さない）・文字列は100文字まで
+const isShallowSignal = (v) => v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length <= 20 &&
+  Object.entries(v).every(([k, x]) => k.length <= 32 && (x === null || typeof x === 'boolean' ||
+    (typeof x === 'number' && Number.isFinite(x)) || (typeof x === 'string' && x.length <= 100)));
+// 期限の過ぎた案内と、古い持ち主の記録を消す
+function pruneSessions(now) {
+  for (const [id, g] of sessionGuidanceStore) if (g.expiresAt && Date.parse(g.expiresAt) < now) sessionGuidanceStore.delete(id);
+  for (const [id, t] of sessionTokens) if (now - t.at > TOKEN_KEEP_MS && !sessionGuidanceStore.has(id)) sessionTokens.delete(id);
+}
+function sameToken(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const x = Buffer.from(a), y = Buffer.from(b);
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+}
+function validateGuidanceBody(body) {
+  const { configVersion, guidanceSeq, createdAt, expiresAt, guidance, signal } = body;
+  if (!Number.isSafeInteger(guidanceSeq) || guidanceSeq < 0) return "guidanceSeq は0以上の整数で必須です。";
+  if (configVersion !== undefined && (!Number.isSafeInteger(configVersion) || configVersion < 1)) return "configVersion は1以上の整数です。";
+  if (createdAt !== undefined && createdAt !== null && !isIsoDate(createdAt)) return "createdAt は日時の文字列です。";
+  if (expiresAt !== undefined && expiresAt !== null && !isIsoDate(expiresAt)) return "expiresAt は日時の文字列です。";
+  if (guidance !== undefined && (guidance === null || typeof guidance !== 'object' || Array.isArray(guidance))) return "guidance はオブジェクトです。";
+  const g = guidance ?? {};
+  if (g.targetBpm !== undefined && !(typeof g.targetBpm === 'number' && Number.isFinite(g.targetBpm) && g.targetBpm >= 60 && g.targetBpm <= 220)) return "targetBpm は 60〜220 の数値です。";
+  if (g.gait !== undefined && !GUIDANCE_GAITS.includes(g.gait)) return "gait は run または walk です。";
+  if (g.mode !== undefined && !GUIDANCE_MODES.includes(g.mode)) return `mode は ${GUIDANCE_MODES.join(' / ')} のどれかです。`;
+  if (g.status !== undefined && !(typeof g.status === 'string' && g.status.length <= 32)) return "status は32文字以内の文字列です。";
+  if (signal !== undefined && signal !== null && !isShallowSignal(signal)) return "signal は20項目以内の浅いオブジェクト（値は数・100文字以内の文字列・真偽・null）です。";
+  if (expiresAt !== undefined && expiresAt !== null) {
+    const end = Date.parse(expiresAt), now = Date.now();
+    if (end > now + GUIDANCE_MAX_MS) return "expiresAt は10分先までです。";
+  }
+  return null;
+}
 
 // [PUT] セッション案内情報の保存 (Web -> API)
-app.put('/api/sessions/:sessionId/guidance', (req, res) => {
+app.put('/api/sessions/:sessionId/guidance', rateLimit(120), (req, res) => {
   const sessionId = req.params.sessionId;
   const body = req.body ?? {};
 
-  const { configVersion, guidanceSeq, createdAt, expiresAt, guidance, signal } = body;
-
-  if (guidanceSeq === undefined || typeof guidanceSeq !== 'number') {
-    return sendError(res, 400, "INVALID_INPUT", "guidanceSeq（数値）は必須です。");
+  if (!SESSION_ID_RE.test(sessionId)) {
+    return sendError(res, 400, "INVALID_INPUT", "sessionId は16〜64文字の英数字・-・_ です。");
   }
+  if (typeof body !== 'object' || Array.isArray(body)) {
+    return sendError(res, 400, "INVALID_INPUT", "本文はオブジェクトである必要があります。");
+  }
+  const invalid = validateGuidanceBody(body);
+  if (invalid) return sendError(res, 400, "INVALID_INPUT", invalid);
+
+  // S5: 2回目以降の書き込みは、最初に発行したトークン（X-Session-Token ヘッダー）が一致しないと拒否
+  const now = Date.now();
+  const known = sessionTokens.get(sessionId);
+  let issuedToken = null;
+  if (known) {
+    if (!sameToken(req.get('X-Session-Token'), known.token)) {
+      return sendError(res, 403, "FORBIDDEN", "このセッションに書き込む権限がありません（X-Session-Token）。");
+    }
+    known.at = now;
+    // 案内が期限切れで消えても、最後の番号より古い書き込みは受け付けない（巻き戻し防止）
+    if (known.lastSeq !== undefined && known.lastSeq >= body.guidanceSeq) {
+      return sendError(res, 409, "CONFLICT", `古い更新番号です。(現在: ${known.lastSeq}, 送信: ${body.guidanceSeq})`, "競合");
+    }
+  } else {
+    if (sessionTokens.size >= MAX_SESSIONS) pruneSessions(now);
+    if (sessionTokens.size >= MAX_SESSIONS) return sendError(res, 503, "CAPACITY", "セッション数の上限です。");
+    issuedToken = crypto.randomBytes(32).toString('base64url');
+  }
+
+  const { configVersion, guidanceSeq, createdAt, guidance, signal } = body;
+  // S8: 期限はサーバーで決める（省略は5分後、最長10分先）
+  const expiresAt = new Date(body.expiresAt == null ? now + GUIDANCE_DEFAULT_MS : Date.parse(body.expiresAt)).toISOString();
 
   const existing = sessionGuidanceStore.get(sessionId);
   if (existing && existing.guidanceSeq >= guidanceSeq) {
@@ -383,23 +544,34 @@ app.put('/api/sessions/:sessionId/guidance', (req, res) => {
   };
 
   sessionGuidanceStore.set(sessionId, guidanceData);
+  if (issuedToken) sessionTokens.set(sessionId, { token: issuedToken, at: now, lastSeq: guidanceSeq });
+  else sessionTokens.get(sessionId).lastSeq = guidanceSeq;
 
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
   sendOk(res, {
     ステータス: "成功",
-    データ: guidanceData
+    データ: guidanceData,
+    // 最初の書き込みのときだけ返す。以後の PUT では X-Session-Token ヘッダーに入れる
+    ...(issuedToken ? { writeToken: issuedToken } : {})
   });
 });
 
 // [GET] セッション案内情報の取得 (iPhone -> API)
 app.get('/api/sessions/:sessionId/guidance', (req, res) => {
   const sessionId = req.params.sessionId;
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+  if (!SESSION_ID_RE.test(sessionId)) {
+    return sendError(res, 400, "INVALID_INPUT", "sessionId は16〜64文字の英数字・-・_ です。");
+  }
   const guidanceData = sessionGuidanceStore.get(sessionId);
 
-  res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
-
   if (!guidanceData) {
-    return sendError(res, 404, "NOT_FOUND", `セッション [${sessionId}] の案内データが見つかりません。`);
+    return sendError(res, 404, "NOT_FOUND", "セッションの案内データが見つかりません。");
+  }
+  // S8: 期限切れの案内は配らず、消す（持ち主の記録は残す）
+  if (guidanceData.expiresAt && Date.parse(guidanceData.expiresAt) < Date.now()) {
+    sessionGuidanceStore.delete(sessionId);
+    return sendError(res, 410, "EXPIRED", "案内の期限が切れています。");
   }
 
   sendOk(res, {
@@ -444,12 +616,19 @@ const alongRouteRateLimits = new Map();
 app.post('/api/signals/along-route', (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
 
-  const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
+  const ipKey = clientIp(req);
   const now = Date.now();
-  let rateRecord = alongRouteRateLimits.get(clientIp);
+  let rateRecord = alongRouteRateLimits.get(ipKey);
   if (!rateRecord || now - rateRecord.windowStart > 60000) {
+    if (!rateRecord && alongRouteRateLimits.size >= RATE_KEYS_MAX) {
+      for (const [k, v] of alongRouteRateLimits) if (now - v.windowStart > 60000) alongRouteRateLimits.delete(k);
+      // 消しても満杯なら、新しい IP は記録せずに断る（記録が増え続けない）
+      if (alongRouteRateLimits.size >= RATE_KEYS_MAX) {
+        return sendError(res, 429, "RATE_LIMITED", "Too many requests. Please try again later.");
+      }
+    }
     rateRecord = { windowStart: now, count: 0 };
-    alongRouteRateLimits.set(clientIp, rateRecord);
+    alongRouteRateLimits.set(ipKey, rateRecord);
   }
   rateRecord.count++;
   if (rateRecord.count > 30) {
@@ -458,13 +637,24 @@ app.post('/api/signals/along-route', (req, res) => {
 
   const body = req.body ?? {};
   const route = body.route;
-  const corridorM = Number(body.corridorM) || 30;
+  // corridorM は省略なら 30m。指定するなら 0 より大きく 100m 以下の数（文字列の "Infinity" で全件が対象になっていた）
+  const corridorM = body.corridorM === undefined ? 30 : body.corridorM;
+  if (typeof corridorM !== 'number' || !Number.isFinite(corridorM) || corridorM <= 0 || corridorM > 100) {
+    return sendError(res, 400, "INVALID_INPUT", "corridorM must be a number in (0, 100].");
+  }
 
   if (!route || route.type !== 'LineString' || !Array.isArray(route.coordinates)) {
     return sendError(res, 400, "INVALID_ROUTE_GEOMETRY", "GeoJSON LineString format is required.");
   }
   if (route.coordinates.length < 2 || route.coordinates.length > 1000) {
     return sendError(res, 400, "INVALID_ROUTE_GEOMETRY", "Coordinate points must be between 2 and 1000.");
+  }
+  // 各点は [経度, 緯度] の有限の数（null の点で 500 になっていた）
+  const validPoint = (p) => Array.isArray(p) && p.length >= 2 &&
+    typeof p[0] === 'number' && Number.isFinite(p[0]) && Math.abs(p[0]) <= 180 &&
+    typeof p[1] === 'number' && Number.isFinite(p[1]) && Math.abs(p[1]) <= 90;
+  if (!route.coordinates.every(validPoint)) {
+    return sendError(res, 400, "INVALID_ROUTE_GEOMETRY", "Each coordinate must be [lon, lat] with finite numbers.");
   }
 
   if (!allSignalsDataF02 || allSignalsDataF02.length === 0) {
@@ -551,6 +741,8 @@ app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
     return sendError(res, 400, "INVALID_INPUT", "無効なJSONフォーマットです");
   }
+  if (err.type === 'entity.too.large') return sendError(res, 413, "PAYLOAD_TOO_LARGE", "本文が大きすぎます（100KB まで）");
+  if (err.status === 415) return sendError(res, 415, "UNSUPPORTED_MEDIA_TYPE", "本文の形式が未対応です");
   sendError(res, err.status || 500, "INTERNAL_ERROR", "サーバーエラーが発生しました");
 });
 

@@ -104,10 +104,18 @@ test('POST /api/logs: 空ボディは INVALID_INPUT（ファイル書き込み�
 
 test('セッション案内: PUT成功 / 古いseqは CONFLICT / 未登録は NOT_FOUND', async () => {
   const id = 'test-' + Date.now();
-  const put = (seq) => postJson(`/api/sessions/${id}/guidance`, { guidanceSeq: seq }, 'PUT');
+  // 2回目以降の書き込みは、最初の PUT で受け取った writeToken を X-Session-Token に入れる（セキュリティ対策 S5）
+  let token = null;
+  const put = (seq) => getJson(`/api/sessions/${id}/guidance`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...(token ? { 'X-Session-Token': token } : {}) },
+    body: JSON.stringify({ guidanceSeq: seq })
+  });
   const a = await put(2);
   assert.strictEqual(a.res.status, 200);
   assert.strictEqual(a.body.status, 'ok');
+  token = a.body.writeToken;
+  assert.ok(typeof token === 'string' && token.length >= 40);
   const b = await put(1);
   assert.strictEqual(b.res.status, 409);
   assert.strictEqual(b.body.error.code, 'CONFLICT');
