@@ -16,8 +16,8 @@ const runAll = (config) => {
 };
 
 test('デモ A/B/W が登録され、walk.enabled が明示される。endMarginS=5 を保持', () => {
-  assert.deepEqual(DEMO_SCENARIOS.map((s) => s.id).sort(), ['A', 'B', 'W']);
-  for (const s of DEMO_SCENARIOS) {
+  assert.deepEqual(DEMO_SCENARIOS.map((s) => s.id).sort(), ['A', 'B', 'D', 'W']); // D は複数信号（kind: 'route'・config なし）
+  for (const s of DEMO_SCENARIOS.filter((d) => d.kind === 'single')) {
     assert.equal(s.config.control.walk.enabled, true);
     assert.equal(s.config.control.endMarginS, 5);
   }

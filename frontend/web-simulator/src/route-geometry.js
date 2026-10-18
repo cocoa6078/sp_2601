@@ -50,6 +50,19 @@ export function pointAtDistance(route, s) {
 }
 
 /**
+ * 経路の fromS〜toS（先頭からの距離 m）の部分を切り出して新しい route を返す。端点は pointAtDistance で補間する。
+ * 範囲外は RangeError。端の補間点から MIN_SEGMENT_M 未満の途中頂点は落とす（validateRoute の近すぎる点の検査に通すため）。
+ */
+export function sliceRoute(route, fromS, toS, { id = route.id, source = route.source } = {}) {
+  if (!(fromS >= -1e-6 && toS <= route.lengthM + 1e-6 && toS > fromS)) throw new RangeError(`切り出し範囲が経路外です（${fromS}〜${toS} m / 経路長 ${route.lengthM} m）`);
+  const a = pointAtDistance(route, fromS);
+  const b = pointAtDistance(route, toS);
+  const mid = route.points.filter((_, i) => route.cumulativeM[i] > fromS && route.cumulativeM[i] < toS)
+    .filter((p) => distanceM(a, p) >= MIN_SEGMENT_M && distanceM(p, b) >= MIN_SEGMENT_M);
+  return buildRoute([a, ...mid, b], { id, source });
+}
+
+/**
  * 点 p を経路へ投影する。戻り値 { distM（垂線距離）, s（経路上の累積距離）, segIndex, t, point（投影点） }
  * 垂線距離は局所メートル座標で測る（画面座標は使わない）。
  */

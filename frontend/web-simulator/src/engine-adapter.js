@@ -130,6 +130,7 @@ export function reasonLabel(state) {
     case 'off': return '通常走行';
     case 'waiting': return '信号待ち';
     case 'passed': return '通過済み';
+    case 'uncertain': return '推定の信号データのため加速は提案しません';
     default: return String(state.reason);
   }
 }

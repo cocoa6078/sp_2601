@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildRoute, pointAtDistance } from '../src/route-geometry.js';
+import { buildRoute, localFrame, pointAtDistance } from '../src/route-geometry.js';
 import { addVia, draftPoints, draftRoute, matchSignals, moveVia, removeVia, reorderVia } from '../src/route-builder.js';
 import { DEMO_ROUTE_POINTS, FIXTURE_SIGNALS } from '../src/fixtures.js';
 
@@ -25,10 +25,16 @@ test('0 件: 信号なしの経路は none=true', () => {
 });
 
 test('許容距離 30m の境界: 29m は採用、31m は除外', () => {
+  // 経路の向きに依存しないよう、経路に垂直な方向へ m だけずらした点を作る（経路は南北直線ではなく道沿い）
   const at = pointAtDistance(route, 300);
-  const dLng = (m) => m / (111195 * Math.cos((at.lat * Math.PI) / 180));
-  const near = sig('n', { lat: at.lat, lng: at.lng + dLng(29) });
-  const far = sig('f', { lat: at.lat, lng: at.lng + dLng(31) });
+  const frame = localFrame(route.points[0]);
+  const a = frame.toXY(pointAtDistance(route, 299));
+  const b = frame.toXY(pointAtDistance(route, 301));
+  const len = Math.hypot(b.x - a.x, b.y - a.y);
+  const base = frame.toXY(at);
+  const offset = (m) => frame.toLatLng({ x: base.x - ((b.y - a.y) / len) * m, y: base.y + ((b.x - a.x) / len) * m });
+  const near = sig('n', offset(29));
+  const far = sig('f', offset(31));
   const r = matchSignals(route, [near, far]);
   assert.deepEqual(r.adopted.map((a) => a.key), ['n']);
   assert.equal(r.excluded.find((e) => e.key === 'f').code, 'too-far');

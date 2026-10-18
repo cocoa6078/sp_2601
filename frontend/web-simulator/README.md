@@ -20,7 +20,7 @@ npm.cmd run dev      # http://127.0.0.1:5174/  （Mac は npm run dev）
 
 ## 使い方
 
-1. 起動直後は **固定デモ B（模式コース）** がすぐ再生できる（API 取得は起動条件ではない）。「再生」を押す。
+1. 起動直後は **固定デモ B（道沿いの固定経路）** がすぐ再生できる（API 取得は起動条件ではない）。「再生」を押す。
 2. 画面は「地図設定」「比較再生」の 2 状態。右上「収録モード」で設定・診断を隠して 1920x1080 の収録向け表示にする。
 3. **任意コース**: 地図設定 → 「地図でコース作成」→ 開始地点 → 終了地点 → 経由点（ドラッグで修正、順序入れ替え・削除可）→「経路確定」。
    「経路確定」を押した 1 回だけ、OSRM（foot）で道沿いの歩行経路を取得して置き換える（取得中は「経路を取得中…」）。取得に失敗した・経路条件に合わない場合は、置いた点を直線で結ぶ従来の折れ線に戻し、理由を画面に出す。編集中のプレビューは常に直線で、点を動かすたびの通信はしない。
@@ -29,14 +29,21 @@ npm.cmd run dev      # http://127.0.0.1:5174/  （Mac は npm run dev）
 5. 「結果 JSON を保存」で、条件・経路・信号の採用/除外・core のバージョンと SHA・結果・到達イベントを保存（ローカル保存のみ。`POST /api/logs` は使わない）。
 
 ### 固定デモと任意コースの違い
-- 固定デモ A/B/W は `core/scenarios.js` の定義（400 m 地点の信号・ゴール 600 m）。**模式コース**であり、実地図から測った距離ではない。
+- 固定デモ A/B/W は `core/scenarios.js` の定義（400 m 地点の信号・ゴール 600 m）。地図上の経路は **道沿いの固定経路**（`src/fixtures.js` の `DEMO_WALK_PATH`: 札幌 fixture の sapporo_1 を東西に通る道、OSRM foot で 2026-10-18 に 1 回取得して固定。実行時には通信しない。取得は `node scripts/fetch-demo-walk-path.mjs`、出典 OSRM（FOSSGIS）・© OpenStreetMap contributors）。デモごとに「sapporo_1 の手前 crossingX m から先 goalX−crossingX m」を切り出す（`demoRoutePoints`・`sliceRoute`）ので、経路長が goalX と一致し、信号の印が sapporo_1 の交差点に乗る。距離はその経路に沿った長さで、信号の点灯は模擬（実際の信号とは同期しない）。実際の歩道・横断歩道の通行可否は保証しない。
+- **固定デモ D（5 交差点）**: fixture の sapporo_3 → 8 → 2 → 1 → 5 を通る道沿いの固定経路（`DEMO_D_WALK_PATH`・OSRM foot で 2026-10-18 に 1 回取得して固定、取得は `node scripts/fetch-demo-d-path.mjs --skip=2`）。最初の交差点の 300 m 手前から最後の 200 m 先まで（`core/route-core.test.js` の「API のデモ5交差点」に合わせた）。A/B/W と違い config を持たず、地図コースと同じ `matchSignals → planFromMap → route-core`（先読みは既定どおり有効）で計算する。sapporo_2 は経由点にすると脇道へ引き返すので経由点にせず、経路が約 18 m 脇を通る（許容距離 30 m 以内）。A/B/W は信号 1 つの設計のまま。
 - 任意コースの経路は 2 種類。**道沿い**（`route.source = "osrm-foot"`、`src/walk-routing.js`）と、取得失敗時などの**直線**（`manual-polyline`）。画面に「道沿い（OSRM / OpenStreetMap）」または「直線（取得失敗: 理由）」と表示し、結果 JSON の `route.source` に残す。道沿い経路は 2 m 未満の連続点を間引いてから検証する。経由点が経路の交差・往復を生むと検証で拒否され、直線に戻る（仕様）。
 - 任意コースは、経路の累積距離 s を信号位置 `crossingX`、経路長を `goalX` にして core の 1 交差点モデルへ渡す。任意経路で固定デモと同じ結果になる保証はない。
 - 早歩きは両方とも `control.walk.enabled = true` を明示して渡す。`endMarginS` はシナリオ側の明示値（5 秒）を保持し、core 既定の 8 秒で上書きしない。
 
+## iPhone 画面パネル（模擬表示）
+比較再生と収録モードで、地図の横（狭い画面では下）に iPhone アプリの走行中画面を寄せて再現する。本物の端末ではなく、ブラウザ内の模擬表示（パネル下に明記）。元にした実機アプリ: `frontend/watch-app/Runwave/` の `ContentView.swift`（走行中画面）・`WorkoutRouteTracker.swift`（`WorkoutRouteMap`）・`SimulatorSignalSystem.swift`（`SimulatorSignalCard`）・`RouteNavigation.swift`（案内カード）。Swift は読み取りのみ。
+- 中身: 目標ケイデンスと現在ケイデンス（歩/分）、案内カード（信号までの距離・案内文・ゴールまでの距離）、現在地を追う小さな Leaflet 地図（予定経路は水色の線・現在地・スタート/ゴール・信号の色つき印）、信号カード（色・切替までの秒・信号までの距離・「信号 N / 全体」）、ワークアウト状態と経過時間。
+- 値は RUNWAVE レーンの、地図と同じ tick の core state から `src/phone-view-model.js` が作る（信号の判断は作り直さない）。倍率・一時停止・リセットも地図と同じ時刻に揃う。実機の「到着予測」は core の値ではないので出さない。
+- 文言は `frontend/presentation-simulator/src/demo-view-model.js` の `describeDecision` と同じ表を写している（`vite` の読み込み範囲を広げないため import せず写した。`test/demo-d.test.js` が一致を確認する）。core の reason `uncertain`（推定の信号データでは加速しない）だけ、こちらで文言を補っている。
+
 ## API（任意）
 
-地図設定の「3. API」。既定 URL は `http://localhost:3001`（編集可・5 秒でタイムアウト・自動リトライなし）。
+地図設定の「3. API」。既定 URL は公開 API の `https://sp-2601.vercel.app`（`frontend/dev-dashboard/src/api-client.js` の `DEFAULT_API_BASE` を共有。手元のバックエンドを使うときは `http://localhost:3001` に書き換える。編集可・5 秒でタイムアウト・自動リトライなし）。
 
 - 「参考信号を取得」: `GET /api/signals`。形式検証は `core/api-adapter.js` の `extractSignals`。座標（lat/lon）は adapter の値を使う。0 件・不正 JSON・HTTP エラー・接続失敗は理由と時刻を表示し、既存の条件は変更しない。
 - 「校正値を取得」→「校正値を適用」: `GET /api/calibration`（`extractRunner`）。
@@ -71,6 +78,8 @@ OpenStreetMap の標準タイルを通常のズーム・パンの範囲だけ読
 
 | ファイル | 役割 |
 |---|---|
+| `src/phone-view-model.js` / `src/phone-view.js` | iPhone 画面パネルの表示値（core の state から）と DOM・Leaflet 描画 |
+| `scripts/fetch-demo-walk-path.mjs` / `scripts/fetch-demo-d-path.mjs` | 固定デモの道沿い経路を OSRM から 1 回取得して表示する手動スクリプト（実行時には使わない） |
 | `src/walk-routing.js` | OSRM foot から道沿い経路を 1 回取得（`fetchWalkRoute`・2 m 未満の点の間引き・帰属文言） |
 | `src/route-geometry.js` | 地理距離・投影・累積距離・`pointAtDistance`・経路検証（距離計算はここだけ） |
 | `src/route-builder.js` | 経由点の編集、経路上の信号の採用・検証 |

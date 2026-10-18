@@ -8,7 +8,7 @@ export function buildReport({ coreVersion, routeVersion, perSignal, gitSha, cour
     notice: REPORT_NOTICE,
     generatedAt: new Date().toISOString(),
     core: { exportedVersion: coreVersion, routeVersion: routeVersion ?? null, gitSha: gitSha ?? null },
-    course: { kind: courseKind, note: courseKind === 'demo' ? '模式コース（既存シナリオの距離を保持。実地図から測った距離ではない）' : '手で置いた点を結ぶ折れ線（仮想経路。歩道通行可能性・道路距離は保証しない）' },
+    course: { kind: courseKind, note: courseKind === 'demo' ? '固定デモ（道沿いの固定経路 OSRM 由来・© OpenStreetMap contributors。距離は既存シナリオの値で、実際の信号の点灯とは同期しない模擬信号）' : '手で置いた点を結ぶ折れ線（仮想経路。歩道通行可能性・道路距離は保証しない）' },
     route: route && { id: route.id, source: route.source, points: route.points, cumulativeM: route.cumulativeM, lengthM: route.lengthM },
     signals: {
       adopted: signals.adopted.map((s) => ({ key: s.key, signalId: s.signalId, origin: s.origin ?? null, provenance: signalProvenance(s), original: { lat: s.lat, lng: s.lng }, projected: s.projPoint ?? null, routeDistanceM: s.s, offsetM: s.offsetM, signal: s.signal })),

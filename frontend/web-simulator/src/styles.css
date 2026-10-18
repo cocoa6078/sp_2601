@@ -46,7 +46,8 @@ html, body { margin: 0; min-height: 100%; background: var(--navy); color: var(--
 .grow { flex: 1; }
 
 /* 本文 */
-.body { display: grid; grid-template-columns: 65fr 35fr; gap: var(--gap); min-height: 0; }
+.body { display: grid; grid-template-columns: minmax(0, 50fr) 300px minmax(0, 30fr); gap: var(--gap); min-height: 0; }
+.body.no-phone { grid-template-columns: 65fr 35fr; }
 .mapwrap { position: relative; min-height: 0; border-radius: 12px; overflow: hidden; border: 1px solid var(--navy3); }
 #map { position: absolute; inset: 0; background: #1a2b40; }
 #map.picking { cursor: crosshair; }
@@ -58,6 +59,58 @@ html, body { margin: 0; min-height: 100%; background: var(--navy); color: var(--
 .side { min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
 #run-panel { display: flex; flex-direction: column; gap: var(--gap); min-height: 0; flex: 1; }
 #setup-panel { min-height: 0; overflow: auto; flex: 1; }
+
+/* iPhone 画面パネル（実機アプリの走行中画面を寄せた模擬表示） */
+.phonewrap { min-height: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.phone { position: relative; flex: 1; min-height: 0; width: 300px; max-width: 100%; border-radius: 34px; border: 6px solid #20242b; background: #0d0e11; box-shadow: 0 0 0 1px #3a4350; overflow: hidden; display: flex; flex-direction: column; }
+.ph-notch { flex: none; width: 96px; height: 18px; margin: 0 auto; background: #20242b; border-radius: 0 0 12px 12px; }
+.ph-screen { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 10px 10px; display: flex; flex-direction: column; gap: 7px; font-size: 13px; color: #f2f4f7; scrollbar-width: none; }
+.ph-screen::-webkit-scrollbar { display: none; }
+.ph-top { display: flex; justify-content: space-between; align-items: center; font-size: 17px; font-weight: 800; }
+.ph-run { font-size: 12px; font-weight: 700; padding: 1px 8px; border-radius: 99px; background: rgba(255, 255, 255, 0.14); }
+.ph-card { background: rgba(255, 255, 255, 0.12); border-radius: 14px; padding: 8px 10px; }
+.ph-lbl, .ph-card small { font-size: 11px; color: #9aa4b2; }
+.ph-cad-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.ph-big { font-size: 40px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.05; }
+.ph-unit { font-size: 13px; color: #9aa4b2; margin-left: 4px; }
+.ph-note { font-size: 11px; color: var(--mint); min-height: 0; }
+.ph-cur { text-align: right; color: #22d3ee; display: flex; flex-direction: column; line-height: 1.1; }
+.ph-cur b { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ph-cur small { color: #22d3ee; }
+.ph-nav { display: flex; gap: 10px; align-items: center; }
+.ph-ico { flex: none; width: 34px; text-align: center; font-size: 26px; font-weight: 800; color: #22d3ee; }
+.phone [data-kind="stopRec"] .ph-ico, .ph-screen[data-kind="stopRec"] .ph-ico { color: var(--amber); }
+.ph-navtxt { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.ph-dist { font-size: 16px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.ph-head { font-size: 14px; font-weight: 700; }
+.ph-sub { font-size: 12px; color: #9aa4b2; }
+.ph-goal { font-size: 11px; color: #9aa4b2; }
+.ph-map { flex: none; height: 150px; border-radius: 14px; overflow: hidden; background: #1a2b40; position: relative; z-index: 0; }
+.ph-map .leaflet-control-attribution { font-size: 9px; }
+.ph-sig-h { font-size: 13px; font-weight: 700; color: #22d3ee; margin-bottom: 4px; }
+.ph-sig-row { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.ph-sig-row b { font-size: 14px; }
+.ph-sw { font-size: 11px; color: #9aa4b2; font-variant-numeric: tabular-nums; }
+.ph-sigtitle { font-size: 11px; font-weight: 700; }
+.ph-lamp { flex: none; width: 18px; height: 18px; border-radius: 50%; background: #555; }
+.ph-lamp.ps-green { background: #34c759; box-shadow: 0 0 6px rgba(52, 199, 89, 0.6); }
+.ph-lamp.ps-flash { background: #34c759; animation: blink 0.5s steps(2, jump-none) infinite; }
+.ph-lamp.ps-red { background: #ff453a; box-shadow: 0 0 6px rgba(255, 69, 58, 0.6); }
+.ph-tiny { font-size: 10px; color: #7d8794; margin-top: 3px; }
+.ph-st { display: flex; justify-content: space-between; align-items: flex-end; }
+.ph-stv { font-size: 16px; font-weight: 800; color: #34c759; }
+.ph-el { text-align: right; }
+.ph-elv { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.ph-cap { flex: none; font-size: 11px; color: var(--muted); text-align: center; max-width: 300px; }
+.pm-icon { background: none; border: none; }
+.pm { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 800; color: #fff; border: 2px solid #fff; }
+.pm-start { background: #2e9e6b; } .pm-goal { background: #ff453a; }
+.pm-you { width: 16px; height: 16px; background: #0a84ff; box-shadow: 0 0 0 6px rgba(10, 132, 255, 0.28); }
+.pm-sig.ps-none { background: #6b7280; }
+.pm-sig.ps-green { background: #34c759; }
+.pm-sig.ps-flash { background: #34c759; animation: blink 0.5s steps(2, jump-none) infinite; }
+.pm-sig.ps-red { background: #ff453a; }
+.body.no-phone .phonewrap { display: none; }
 
 /* カード */
 .card { flex: 1; min-height: 0; background: var(--navy2); border: 1px solid var(--navy3); border-radius: 12px; padding: 10px 14px; display: flex; flex-direction: column; gap: 4px; }
@@ -166,16 +219,23 @@ html, body { margin: 0; min-height: 100%; background: var(--navy); color: var(--
 
 /* 小さな画面では本文を縦に並べ、アプリ全体をスクロールして情報を確認できるようにする。 */
 @media (max-width: 1500px) {
-  .app { grid-template-rows: auto auto auto auto; padding: 16px; }
+  .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto auto; padding: 16px; }
   .hdr { flex-wrap: wrap; height: auto; gap: 8px 16px; }
   .hdr-mid { order: 3; flex-basis: 100%; }
   .brand { font-size: 28px; }
   .notice { font-size: 18px; }
   .bar { flex-wrap: wrap; min-height: 56px; }
-  .body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(320px, 45vh) auto; }
+  .body, .body.no-phone { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(320px, 45vh) auto auto; }
+  .phone { height: 660px; flex: none; }
   .side { min-height: 620px; overflow: visible; }
   .bottom { grid-auto-flow: row; grid-auto-columns: auto; grid-template-columns: minmax(0, 1fr); }
   .res { min-height: 180px; }
+}
+
+/* 発表で使うノート PC 幅（901〜1500px）でも、iPhone 画面パネルは地図の横に並べる。走行カードは下に回す */
+@media (min-width: 901px) and (max-width: 1500px) {
+  .body:not(.no-phone) { grid-template-columns: minmax(0, 1fr) 312px; grid-template-rows: 660px auto; }
+  .body:not(.no-phone) .side { grid-column: 1 / -1; }
 }
 
 @media (max-width: 560px) {

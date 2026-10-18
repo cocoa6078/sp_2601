@@ -5,8 +5,8 @@ import { createMapView } from './map-view.js';
 import { Playback, SPEEDS } from './playback.js';
 import { STATUS_LABEL, initialState, statusOf } from './store.js';
 import { DEMO_SCENARIOS, defaultRunnerAndControl, getDemo } from './scenarios.js';
-import { DEMO_ROUTE_POINTS, FIXTURE_SIGNALS } from './fixtures.js';
-import { addVia, draftPoints, draftRoute, matchSignals, moveVia, removeVia, reorderVia } from './route-builder.js';
+import { FIXTURE_SIGNALS, demoDRoutePoints, demoRoutePoints } from './fixtures.js';
+import { DEFAULT_TOLERANCE_M, addVia, draftPoints, draftRoute, matchSignals, moveVia, removeVia, reorderVia } from './route-builder.js';
 import { buildRoute, pointAtDistance, validateRoute } from './route-geometry.js';
 import { OSM_FIX_URL, WALK_ROUTE_LABEL, WALK_ROUTE_SOURCE, fetchWalkRoute } from './walk-routing.js';
 import { expectedFor, isRouteConfig, matchesExpected, planFromMap, runnerView, summaryOf, versions } from './engine-adapter.js';
@@ -14,6 +14,8 @@ import { fetchCalibration, fetchSignals } from './api.js';
 import { buildReport, buildTimeSeriesCsv, csvFileName, reportFileName } from './report.js';
 import { ESTIMATED_LABEL, anyEstimated, apiFailureMessage, buildApiInfo } from './provenance.js';
 import { runnerCard } from './metrics-view.js';
+import { createPhoneView } from './phone-view.js';
+import { buildPhoneFrame } from './phone-view-model.js';
 import { resultsHtml } from './comparison-view.js';
 import { signalDetailHtml } from './signal-view.js';
 import { esc, f1 } from './format.js';
@@ -27,6 +29,9 @@ const mapView = createMapView($('map'), {
   onDragPoint: (kind, idx, ll) => handleDrag(kind, idx, ll),
   onTileError: () => { S.tileFailed = true; renderBanner(); },
 });
+
+// iPhone 画面パネル（比較再生と収録モードで地図の横に出す。RUNWAVE レーンの同じ tick の state から作る）
+const phoneView = createPhoneView($('phone'));
 
 // ---------------------------------------------------------------- 計算条件の確定
 function runnerAndControl() {
@@ -42,17 +47,31 @@ function recompute({ autoApply = false } = {}) {
   S.adopted = [];
   S.match = null;
   S.routeErrors = [];
-  if (S.courseKind === 'demo') {
+  if (S.courseKind === 'demo' && getDemo(S.demoId).kind === 'route') {
+    // 固定デモ D: 道沿いの固定経路 + fixture の 5 信号。地図コースと同じ matchSignals → planFromMap → route-core で計算する（先読みは既定どおり有効）
+    S.factor = 1;
+    S.route = buildRoute(demoDRoutePoints(), { id: 'demo-d', source: 'preset' });
+    S.match = matchSignals(S.route, FIXTURE_SIGNALS, { toleranceM: DEFAULT_TOLERANCE_M });
+    S.adopted = S.match.adopted.map((a) => ({ ...a, originLabel: '固定デモ D（模擬信号 fixture の 5 交差点。位相は仮）' }));
+    S.initialPhaseS = null;
+    if (S.match.errors.length) {
+      S.plan = { kind: 'invalid', reason: S.match.errors.join(' / ') };
+    } else {
+      const { runner, control } = runnerAndControl();
+      S.plan = planFromMap({ route: S.route, adopted: S.adopted, runner, control, runStartUnixS: (S.runStartUnixS ??= Math.floor(Date.now() / 1000)) });
+    }
+  } else if (S.courseKind === 'demo') {
     const demo = getDemo(S.demoId);
-    S.route = buildRoute(DEMO_ROUTE_POINTS, { id: 'demo', source: 'preset' });
     const config = JSON.parse(JSON.stringify(demo.config));
+    // 道沿いの固定経路から「sapporo_1 の手前 crossingX m 〜 先 goalX−crossingX m」を切り出す（経路長 = goalX、信号の印が sapporo_1 に乗る）
+    S.route = buildRoute(demoRoutePoints(config.route.crossingX, config.route.goalX), { id: 'demo', source: 'preset' });
     if (S.runnerOverride) config.runner = { ...config.runner, ...S.runnerOverride };
     if (S.phaseS != null) config.signal.phaseS = S.phaseS;
     S.initialPhaseS = demo.config.signal.phaseS;
     S.factor = S.route.lengthM / config.route.goalX;
     const s = config.route.crossingX * S.factor;
     const p = pointAtDistance(S.route, s);
-    S.adopted = [{ key: `demo:${demo.id}`, signalId: '模式信号', lat: p.lat, lng: p.lng, projPoint: p, s, offsetM: 0, signal: config.signal, origin: 'demo-scenario', originLabel: '固定デモ（模式コース）の信号' }];
+    S.adopted = [{ key: `demo:${demo.id}`, signalId: '模式信号', lat: p.lat, lng: p.lng, projPoint: p, s, offsetM: 0, signal: config.signal, origin: 'demo-scenario', originLabel: '固定デモ（道沿いの固定経路）の信号' }];
     S.plan = { kind: 'single', config };
   } else {
     S.factor = 1;
@@ -159,6 +178,7 @@ function redrawMap(fit) {
   mapView.setEditMode(S.courseKind === 'map' && !S.confirmed ? S.editTool : null);
   mapView.setRouteAttribution(S.courseKind === 'map' && S.confirmed && S.routeInfo?.kind === 'osrm');
   mapView.drawCourse({ draft: S.draft, route, editable, signals, fit, demo });
+  phoneView.setCourse({ route, adopted: S.adopted });
   mapView.clearRunners();
   renderLive();
   renderBanner();
@@ -173,7 +193,7 @@ function renderAll() {
   $('rec-toggle').classList.toggle('on', S.rec);
   const core0 = core.CORE_VERSION;
   const originText = S.courseKind === 'demo'
-    ? '固定デモ（模式コース）。信号は既存シナリオの定義'
+    ? '固定デモ（道沿いの固定経路）。信号は既存シナリオの定義'
     : originLabel();
   const est = anyEstimated(S.adopted) ? `【${ESTIMATED_LABEL}】` : '';
   $('origin').textContent = `${est}データ: ${originText} ｜ core ${core0}・route-core ${versions().routeVersion}（export 値）@ ${META.gitSha ? META.gitSha.slice(0, 7) : 'SHA 不明'}`;
@@ -181,6 +201,8 @@ function renderAll() {
   renderSetup(st);
   $('setup-panel').hidden = S.view !== 'setup' || S.rec;
   $('run-panel').hidden = S.view !== 'run';
+  const showPhone = S.view === 'run' || S.rec;   // 比較再生と収録モードで表示（地図設定では隠す）
+  if ($('phone').hidden === showPhone) { $('phone').hidden = !showPhone; document.querySelector('.body').classList.toggle('no-phone', !showPhone); if (showPhone) setTimeout(() => phoneView.invalidate(), 0); }
   renderLegend();
   renderBanner();
   renderLive();
@@ -212,7 +234,7 @@ function renderLegend() {
 }
 
 function legendRouteNote() {
-  if (S.courseKind === 'demo') return '模式コース: 実地図から測った距離ではない';
+  if (S.courseKind === 'demo') return '固定デモ: 道沿いの固定経路（OSRM 由来）。距離は経路に沿った長さで、実際の信号の点灯とは同期しない（模擬信号）';
   if (S.confirmed && S.routeInfo?.kind === 'osrm') return '道沿い経路は OSRM 推定（実際の歩道・横断の通行可否・信号待ちは保証しない）';
   return '直線の折れ線は仮想経路（道路距離・歩道通行可能性は保証しない）';
 }
@@ -298,8 +320,11 @@ function renderSetup(st) {
       ${m?.none ? `<div class="warn">この経路に対応する信号なし。<button class="btn" data-act="to-demo">固定デモに戻る</button> / 地図設定で経路を変えるか、許容距離を広げてください</div>` : ''}
       ${m?.errors.length ? `<div class="warn">${m.errors.map(esc).join('<br>')}</div>` : ''}
       ${S.adopted.length > 1 ? '<div class="muted">複数信号: route-core で連続走行します（BPM・時刻・歩き方を信号間で引き継ぎ）。</div>' : ''}`;
+  } else if (S.courseKind === 'demo' && getDemo(S.demoId).kind === 'route') {
+    sigSection = `<ul class="siglist">${S.adopted.map((a, i) => `<li>信号${i + 1} <b>${esc(a.signalId)}</b> 経路上 ${f1(a.s)} m・ずれ ${f1(a.offsetM)} m・周期 ${a.signal.cycleS}s</li>`).join('')}</ul>
+      <div class="muted">固定デモ D: 5 交差点を連続走行（route-core・先読みあり）。信号は模擬（位相は仮）。</div>`;
   } else if (S.courseKind === 'demo') {
-    sigSection = '<div class="muted">固定デモの信号は既存シナリオの定義（模式コース）。</div>';
+    sigSection = '<div class="muted">固定デモの信号は既存シナリオの定義（道沿いの固定経路）。</div>';
   } else {
     sigSection = '<div class="muted">経路を確定すると、近くの信号候補を表示します。</div>';
   }
@@ -310,7 +335,7 @@ function renderSetup(st) {
   const calib = S.api.calib;
   $('setup-panel').innerHTML = `<fieldset ${locked ? 'disabled' : ''} class="fs">
     <section class="blk"><h4>1. コース</h4>
-      <label class="rad"><input type="radio" name="ck" value="demo" ${S.courseKind === 'demo' ? 'checked' : ''}> 固定デモ（模式コース）</label>
+      <label class="rad"><input type="radio" name="ck" value="demo" ${S.courseKind === 'demo' ? 'checked' : ''}> 固定デモ（道沿いの固定経路）</label>
       <select data-act="demo" ${S.courseKind === 'demo' ? '' : 'disabled'}>${demoOpts}</select>
       <label class="rad"><input type="radio" name="ck" value="map" ${S.courseKind === 'map' ? 'checked' : ''}> 地図でコース作成（置いた点を結ぶ。経路確定で道沿いに置き換え）</label>
       ${S.courseKind === 'map' ? `<div class="tools">${tools}
@@ -363,6 +388,7 @@ function renderLive() {
     $('run-panel').innerHTML = `<div class="card empty"><h3>比較は未開始</h3>
       <p>設定を適用すると、通常と RUNWAVE の 2 走行を並べて表示します。</p></div>`;
     $('bottom').innerHTML = resultsHtml({ phase: 'ready', live: null, expected: S.expected });
+    phoneView.update(null, null);
     return;
   }
   const t = pb.timeS;
@@ -387,7 +413,9 @@ function renderLive() {
     if (isRouteConfig(pb.config)) for (const g of pb.config.signals) colors[g.id] = core.signalAt(g.signal, t).color;
     else if (info) colors[info.key] = core.signalAt(pb.config.signal, t).color;
     mapView.setSignalColors(colors);
-  }
+    // iPhone 画面パネル: 地図の RUNWAVE と同じ tick・同じ位置から作る
+    phoneView.update(buildPhoneFrame({ lane: pb.pair.runwave, t, adopted: S.adopted, factor: S.factor }), pos(pb.pair.runwave.state.x));
+  } else phoneView.update(null, null);
 }
 const runwaveIdx = () => (isRouteConfig(S.pb.config) ? S.pb.pair.runwave.state.signalIndex : 0);
 const pick = (s) => ({ totalTimeS: s.totalTimeS, walkCount: s.walkCount, walkTimeS: s.walkTimeS, walkDistanceM: s.walkDistanceM });
@@ -421,7 +449,7 @@ function saveReport() {
 function currentApiInfo() {
   const lastApiAttempt = S.api.lastAttempt;
   if (S.candidatesOrigin === 'api') return buildApiInfo({ source: 'api', base: S.api.base, url: S.api.signalsUrl, at: S.api.signalsAt, note: '車両用データ由来・位相は仮の参考信号', lastApiAttempt });
-  const note = S.courseKind === 'demo' ? '固定デモ（模式コース）の信号。既存シナリオの定義で、実 API の成功応答ではない' : '模擬信号 fixture（推定データ）。実 API の成功応答ではない';
+  const note = S.courseKind === 'demo' ? '固定デモ（道沿いの固定経路）の信号。既存シナリオの定義で、実 API の成功応答ではない' : '模擬信号 fixture（推定データ）。実 API の成功応答ではない';
   return buildApiInfo({ source: 'fixture', base: S.api.base, note, lastApiAttempt });
 }
 
@@ -553,13 +581,13 @@ function onChange(e) {
 
 document.addEventListener('click', onClick);
 document.addEventListener('change', onChange);
-$('tab-setup').addEventListener('click', () => { S.rec = false; S.view = 'setup'; renderAll(); mapView.invalidate(); });
+$('tab-setup').addEventListener('click', () => { S.rec = false; S.view = 'setup'; renderAll(); mapView.invalidate(); phoneView.invalidate(); });
 $('tab-run').addEventListener('click', () => { S.view = 'run'; renderAll(); });
 $('rec-toggle').addEventListener('click', () => {
   S.rec = !S.rec;
   if (S.rec) S.view = 'run';
   renderAll();
-  setTimeout(() => mapView.invalidate(), 50);
+  setTimeout(() => { mapView.invalidate(); phoneView.invalidate(); }, 50);
 });
 
 // バックグラウンド化で自動一時停止（復帰時は手動再開。隠れていた時間はまとめて計算しない）
