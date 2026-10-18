@@ -52,8 +52,17 @@ struct TempoOutputSettingsCard: View {
             }
 
             if store.outputSettings.mode == .audio || store.outputSettings.mode == .iphoneAudio {
+                Picker("テンポ音の音色", selection: Binding(
+                    get: { store.outputSettings.sound },
+                    set: { store.setTempoSound($0) }
+                )) {
+                    ForEach(TempoSound.allCases) { sound in
+                        Text(sound.label).tag(sound)
+                    }
+                }
+                .pickerStyle(.menu)
                 HStack {
-                    Text("ビープ音の音量")
+                    Text("テンポ音の音量")
                     Spacer()
                     Text("\(Int((store.outputSettings.volume * 100).rounded()))%")
                         .monospacedDigit()
@@ -63,7 +72,7 @@ struct TempoOutputSettingsCard: View {
                     get: { store.outputSettings.volume },
                     set: { store.setAudioVolume($0) }
                 ), in: 0...1, step: 0.05) {
-                    Text("ビープ音の音量")
+                    Text("テンポ音の音量")
                 } minimumValueLabel: {
                     Image(systemName: "speaker.fill")
                 } maximumValueLabel: {
@@ -72,7 +81,7 @@ struct TempoOutputSettingsCard: View {
                 .accessibilityValue("\(Int((store.outputSettings.volume * 100).rounded()))パーセント")
                     Text(store.outputSettings.mode == .iphoneAudio
                          ? "iPhoneまたは接続中のイヤホンから鳴らします。ほかの音楽を止めずに重ねて再生します。"
-                         : "Watchから目標テンポに合わせて「ピッ」と鳴らします。実際の音量はWatch本体の音量にも影響されます。")
+                         : "Watchから選んだ音色で鳴らします。実際の音量はWatch本体の音量にも影響されます。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

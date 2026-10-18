@@ -29,6 +29,18 @@ struct TempoOutputSettings: Codable, Hashable {
     var mode: TempoOutputMode = .haptic
     var hapticStyle: TempoHapticStyle = .normal
     var volume: Double = 0.7
+    var sound: TempoSound = .beep
+
+    private enum CodingKeys: String, CodingKey { case mode, hapticStyle, volume, sound }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        mode = try values.decode(TempoOutputMode.self, forKey: .mode)
+        hapticStyle = try values.decode(TempoHapticStyle.self, forKey: .hapticStyle)
+        volume = try values.decode(Double.self, forKey: .volume)
+        // 既存の設定データには音色がない。音量・出力先を維持したまま移行する。
+        sound = try values.decodeIfPresent(TempoSound.self, forKey: .sound) ?? .beep
+    }
 
     private static let storageKey = "runwave.tempoOutputSettings.v1"
 
@@ -45,7 +57,7 @@ struct TempoOutputSettings: Codable, Hashable {
     }
 
     var payload: [String: Any] {
-        ["outputMode": mode.rawValue, "hapticStyle": hapticStyle.rawValue, "audioVolume": volume]
+        ["outputMode": mode.rawValue, "hapticStyle": hapticStyle.rawValue, "audioVolume": volume, "audioSound": sound.rawValue]
     }
 
     init() {}
@@ -60,5 +72,6 @@ struct TempoOutputSettings: Codable, Hashable {
         self.mode = mode
         self.hapticStyle = style
         self.volume = min(max(volume, 0), 1)
+        self.sound = (payload["audioSound"] as? String).flatMap(TempoSound.init(rawValue:)) ?? .beep
     }
 }

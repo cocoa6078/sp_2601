@@ -67,6 +67,40 @@ struct NavigationPath {
         offsets = points.isEmpty ? [] : distances
     }
 
+    func point(at offset: Double) -> MKMapPoint? {
+        guard offset.isFinite, offset >= 0, offset <= length, let first = points.first else { return nil }
+        if offset == 0 { return first }
+        for index in 0..<(points.count - 1) {
+            let segmentLength = offsets[index + 1] - offsets[index]
+            guard segmentLength > 0, offsets[index + 1] >= offset else { continue }
+            let fraction = (offset - offsets[index]) / segmentLength
+            let start = points[index], end = points[index + 1]
+            return MKMapPoint(x: start.x + (end.x - start.x) * fraction,
+                              y: start.y + (end.y - start.y) * fraction)
+        }
+        return nil
+    }
+
+    /// 案内文中の左右ではなく、進行方向に沿った経路の曲がり方を調べる。
+    func turn(at offset: Double, before: Double = 12, after: Double = 12) -> NavigationTurn? {
+        let beforeDistance = min(before, offset)
+        let afterDistance = min(after, length - offset)
+        guard beforeDistance >= 2, afterDistance >= 2,
+              let previous = point(at: offset - beforeDistance),
+              let corner = point(at: offset),
+              let next = point(at: offset + afterDistance) else { return nil }
+        let incoming = (x: corner.x - previous.x, y: corner.y - previous.y)
+        let outgoing = (x: next.x - corner.x, y: next.y - corner.y)
+        guard hypot(incoming.x, incoming.y) > 0, hypot(outgoing.x, outgoing.y) > 0 else { return nil }
+        let cross = incoming.x * outgoing.y - incoming.y * outgoing.x
+        let dot = incoming.x * outgoing.x + incoming.y * outgoing.y
+        let angle = atan2(cross, dot) * 180 / .pi
+        if abs(angle) < 20 { return .straight }
+        if abs(angle) >= 155 { return .uTurn }
+        // MKMapPointのY軸は南向きに増えるので、正の外積は右折。
+        return angle > 0 ? .right : .left
+    }
+
     func projection(of coordinate: CLLocationCoordinate2D, minimum: Double = 0, maximum: Double = .infinity) -> (offset: Double, separation: Double)? {
         guard points.count > 1 else { return nil }
         let point = MKMapPoint(coordinate)
@@ -93,6 +127,45 @@ struct NavigationPath {
     }
 }
 
+enum NavigationTurn: Equatable {
+    case straight, left, right, uTurn
+}
+
+/// 全画面・音声・Watchで共通に使う、曲がり角に対応した案内。
+struct NavigationManeuver {
+    let offset: Double
+    let instruction: String
+    let symbol: String
+
+    init?(offset: Double, nativeInstruction: String, turn: NavigationTurn?) {
+        self.offset = offset
+        let text = nativeInstruction.lowercased()
+        // ロータリーの出口番号などは、単純な左右に置き換えない。
+        if text.contains("ロータリー") || text.contains("環状交差点") || text.contains("roundabout") {
+            instruction = nativeInstruction
+            symbol = "arrow.up"
+            return
+        }
+        switch turn {
+        case .left:
+            instruction = "左方向です"
+            symbol = "arrow.turn.up.left"
+        case .right:
+            instruction = "右方向です"
+            symbol = "arrow.turn.up.right"
+        case .uTurn:
+            instruction = "折り返してください"
+            symbol = "arrow.uturn.backward"
+        case .straight, nil:
+            // 文章に別の曲がり角や道路の左右が含まれても、曲がる向きと決めつけない。
+            let mentionsDirection = ["左", "右", "left", "right", "turn", "折り返"].contains { text.contains($0) }
+            guard !mentionsDirection else { return nil }
+            instruction = nativeInstruction
+            symbol = "arrow.up"
+        }
+    }
+}
+
 @MainActor
 final class RouteNavigation: ObservableObject {
     @Published private(set) var selectedRoute: MKRoute?
@@ -102,12 +175,8 @@ final class RouteNavigation: ObservableObject {
     @Published private(set) var remainingDistance: Double?
     @Published private(set) var isOffRoute = false
     @Published private(set) var isRecalculating = false
-    private struct Maneuver {
-        let offset: Double
-        let instruction: String
-    }
     private var path: NavigationPath?
-    private var maneuvers: [Maneuver] = []
+    private var maneuvers: [NavigationManeuver] = []
     private var announced = Set<Int>()
     private var progress = 0.0
     private var lastLocation: CLLocation?
@@ -133,13 +202,27 @@ final class RouteNavigation: ObservableObject {
         instructionSymbol = "arrow.up"
         guard let route, let path else { return }
         var minimum = 0.0
+        var steps: [(offset: Double, instruction: String)] = []
         for step in route.steps where !step.instructions.isEmpty && step.polyline.pointCount > 0 {
             let coordinate = step.polyline.points()[0].coordinate
             guard let point = path.projection(of: coordinate, minimum: minimum) else { continue }
             minimum = point.offset
             // 出発・到着の案内は既存の開始画面とゴール画面に任せる。
             guard point.offset > 3, point.offset < path.length - 10 else { continue }
-            maneuvers.append(Maneuver(offset: point.offset, instruction: step.instructions))
+            // 同じ交差点を複数のステップが共有する場合は一つにまとめる。
+            if let last = steps.last, point.offset - last.offset < 1 { continue }
+            steps.append((offset: point.offset, instruction: step.instructions))
+        }
+        for (index, step) in steps.enumerated() {
+            let previousOffset = index > 0 ? steps[index - 1].offset : 0
+            let nextOffset = index + 1 < steps.count ? steps[index + 1].offset : path.length
+            // 近接する次の曲がり角を混ぜず、この曲がり角の前後だけで判定する。
+            let turn = path.turn(at: step.offset,
+                                 before: min(12, (step.offset - previousOffset) / 2),
+                                 after: min(12, (nextOffset - step.offset) / 2))
+            if let maneuver = NavigationManeuver(offset: step.offset, nativeInstruction: step.instruction, turn: turn) {
+                maneuvers.append(maneuver)
+            }
         }
     }
 
@@ -197,11 +280,11 @@ final class RouteNavigation: ObservableObject {
         }
         let distance = max(0, next.element.offset - progress)
         instruction = next.element.instruction
-        instructionSymbol = Self.symbol(for: instruction)
+        instructionSymbol = next.element.symbol
         distanceToManeuver = distance
         guard distance <= 20, projection.separation <= 20, !announced.contains(next.offset) else { return }
         announced.insert(next.offset)
-        speak("まもなく、\(Self.spokenInstruction(instruction))")
+        speak("まもなく、\(instruction)")
     }
 
     private func recalculate(from location: CLLocation) {
@@ -252,20 +335,6 @@ final class RouteNavigation: ObservableObject {
         }
     }
 
-    private static func spokenInstruction(_ instruction: String) -> String {
-        let text = instruction.lowercased()
-        if text.contains("ロータリー") || text.contains("roundabout") { return instruction }
-        if text.contains("右") || text.contains("right") { return "右方向です" }
-        if text.contains("左") || text.contains("left") { return "左方向です" }
-        return instruction
-    }
-
-    private static func symbol(for instruction: String) -> String {
-        let text = instruction.lowercased()
-        if text.contains("右") || text.contains("right") { return "arrow.turn.up.right" }
-        if text.contains("左") || text.contains("left") { return "arrow.turn.up.left" }
-        return "arrow.up"
-    }
 }
 
 struct NavigationInstructionCard: View {

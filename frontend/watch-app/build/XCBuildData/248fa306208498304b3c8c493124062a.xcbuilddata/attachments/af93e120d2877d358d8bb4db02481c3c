@@ -1,0 +1,179 @@
+{
+  "" : {
+    "diagnostics" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/Runwave-primary.dia",
+    "emit-module-dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/Runwave-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/Runwave-primary-emit-module.dia",
+    "pch" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/Runwave-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/Runwave-primary.swiftdeps"
+  },
+  "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/Runwave/ContentView.swift" : {
+    "const-values" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/ContentView.swiftconstvalues",
+    "dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/ContentView.d",
+    "diagnostics" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/ContentView.dia",
+    "index-unit-output-path" : "/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/ContentView.o",
+    "llvm-bc" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/ContentView.bc",
+    "object" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/ContentView.o",
+    "swift-dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/ContentView.swiftdeps",
+    "swiftmodule" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/ContentView~partial.swiftmodule"
+  },
+  "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/Runwave/GoalMapView.swift" : {
+    "const-values" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/GoalMapView.swiftconstvalues",
+    "dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/GoalMapView.d",
+    "diagnostics" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/GoalMapView.dia",
+    "index-unit-output-path" : "/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/GoalMapView.o",
+    "llvm-bc" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/GoalMapView.bc",
+    "object" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/GoalMapView.o",
+    "swift-dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/GoalMapView.swiftdeps",
+    "swiftmodule" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/GoalMapView~partial.swiftmodule"
+  },
+  "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/Runwave/IPhoneTempoOutputPlayer.swift" : {
+    "const-values" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/IPhoneTempoOutputPlayer.swiftconstvalues",
+    "dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/IPhoneTempoOutputPlayer.d",
+    "diagnostics" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/IPhoneTempoOutputPlayer.dia",
+    "index-unit-output-path" : "/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/IPhoneTempoOutputPlayer.o",
+    "llvm-bc" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/IPhoneTempoOutputPlayer.bc",
+    "object" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/IPhoneTempoOutputPlayer.o",
+    "swift-dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/IPhoneTempoOutputPlayer.swiftdeps",
+    "swiftmodule" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/IPhoneTempoOutputPlayer~partial.swiftmodule"
+  },
+  "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/Runwave/RouteNavigation.swift" : {
+    "const-values" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/RouteNavigation.swiftconstvalues",
+    "dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/RouteNavigation.d",
+    "diagnostics" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/RouteNavigation.dia",
+    "index-unit-output-path" : "/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/RouteNavigation.o",
+    "llvm-bc" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/RouteNavigation.bc",
+    "object" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/RouteNavigation.o",
+    "swift-dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/RouteNavigation.swiftdeps",
+    "swiftmodule" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/RouteNavigation~partial.swiftmodule"
+  },
+  "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/Runwave/RunwaveApp.swift" : {
+    "const-values" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/RunwaveApp.swiftconstvalues",
+    "dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/RunwaveApp.d",
+    "diagnostics" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/RunwaveApp.dia",
+    "index-unit-output-path" : "/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/RunwaveApp.o",
+    "llvm-bc" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/RunwaveApp.bc",
+    "object" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/RunwaveApp.o",
+    "swift-dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/RunwaveApp.swiftdeps",
+    "swiftmodule" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/RunwaveApp~partial.swiftmodule"
+  },
+  "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/Runwave/SignalLightView.swift" : {
+    "const-values" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/SignalLightView.swiftconstvalues",
+    "dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/SignalLightView.d",
+    "diagnostics" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/SignalLightView.dia",
+    "index-unit-output-path" : "/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/SignalLightView.o",
+    "llvm-bc" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/SignalLightView.bc",
+    "object" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/SignalLightView.o",
+    "swift-dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/SignalLightView.swiftdeps",
+    "swiftmodule" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/SignalLightView~partial.swiftmodule"
+  },
+  "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/Runwave/SimulatorSignalSystem.swift" : {
+    "const-values" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/SimulatorSignalSystem.swiftconstvalues",
+    "dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/SimulatorSignalSystem.d",
+    "diagnostics" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/SimulatorSignalSystem.dia",
+    "index-unit-output-path" : "/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/SimulatorSignalSystem.o",
+    "llvm-bc" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/SimulatorSignalSystem.bc",
+    "object" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/SimulatorSignalSystem.o",
+    "swift-dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/SimulatorSignalSystem.swiftdeps",
+    "swiftmodule" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/SimulatorSignalSystem~partial.swiftmodule"
+  },
+  "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/Runwave/SimulatorWalkSource.swift" : {
+    "const-values" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/SimulatorWalkSource.swiftconstvalues",
+    "dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/SimulatorWalkSource.d",
+    "diagnostics" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/SimulatorWalkSource.dia",
+    "index-unit-output-path" : "/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/SimulatorWalkSource.o",
+    "llvm-bc" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/SimulatorWalkSource.bc",
+    "object" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/SimulatorWalkSource.o",
+    "swift-dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/SimulatorWalkSource.swiftdeps",
+    "swiftmodule" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/SimulatorWalkSource~partial.swiftmodule"
+  },
+  "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/Runwave/StrideCalibrationManager.swift" : {
+    "const-values" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/StrideCalibrationManager.swiftconstvalues",
+    "dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/StrideCalibrationManager.d",
+    "diagnostics" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/StrideCalibrationManager.dia",
+    "index-unit-output-path" : "/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/StrideCalibrationManager.o",
+    "llvm-bc" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/StrideCalibrationManager.bc",
+    "object" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/StrideCalibrationManager.o",
+    "swift-dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/StrideCalibrationManager.swiftdeps",
+    "swiftmodule" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/StrideCalibrationManager~partial.swiftmodule"
+  },
+  "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/Runwave/TempoOutputSettingsCard.swift" : {
+    "const-values" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/TempoOutputSettingsCard.swiftconstvalues",
+    "dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/TempoOutputSettingsCard.d",
+    "diagnostics" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/TempoOutputSettingsCard.dia",
+    "index-unit-output-path" : "/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/TempoOutputSettingsCard.o",
+    "llvm-bc" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/TempoOutputSettingsCard.bc",
+    "object" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/TempoOutputSettingsCard.o",
+    "swift-dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/TempoOutputSettingsCard.swiftdeps",
+    "swiftmodule" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/TempoOutputSettingsCard~partial.swiftmodule"
+  },
+  "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/Runwave/WatchConnectivityLink.swift" : {
+    "const-values" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WatchConnectivityLink.swiftconstvalues",
+    "dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WatchConnectivityLink.d",
+    "diagnostics" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WatchConnectivityLink.dia",
+    "index-unit-output-path" : "/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WatchConnectivityLink.o",
+    "llvm-bc" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WatchConnectivityLink.bc",
+    "object" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WatchConnectivityLink.o",
+    "swift-dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WatchConnectivityLink.swiftdeps",
+    "swiftmodule" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WatchConnectivityLink~partial.swiftmodule"
+  },
+  "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/Runwave/WorkoutRouteTracker.swift" : {
+    "const-values" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WorkoutRouteTracker.swiftconstvalues",
+    "dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WorkoutRouteTracker.d",
+    "diagnostics" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WorkoutRouteTracker.dia",
+    "index-unit-output-path" : "/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WorkoutRouteTracker.o",
+    "llvm-bc" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WorkoutRouteTracker.bc",
+    "object" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WorkoutRouteTracker.o",
+    "swift-dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WorkoutRouteTracker.swiftdeps",
+    "swiftmodule" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WorkoutRouteTracker~partial.swiftmodule"
+  },
+  "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/Shared/TempoOutputSettings.swift" : {
+    "const-values" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/TempoOutputSettings.swiftconstvalues",
+    "dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/TempoOutputSettings.d",
+    "diagnostics" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/TempoOutputSettings.dia",
+    "index-unit-output-path" : "/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/TempoOutputSettings.o",
+    "llvm-bc" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/TempoOutputSettings.bc",
+    "object" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/TempoOutputSettings.o",
+    "swift-dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/TempoOutputSettings.swiftdeps",
+    "swiftmodule" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/TempoOutputSettings~partial.swiftmodule"
+  },
+  "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/Shared/TempoSound.swift" : {
+    "const-values" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/TempoSound.swiftconstvalues",
+    "dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/TempoSound.d",
+    "diagnostics" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/TempoSound.dia",
+    "index-unit-output-path" : "/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/TempoSound.o",
+    "llvm-bc" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/TempoSound.bc",
+    "object" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/TempoSound.o",
+    "swift-dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/TempoSound.swiftdeps",
+    "swiftmodule" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/TempoSound~partial.swiftmodule"
+  },
+  "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/Shared/WatchRouteGuidance.swift" : {
+    "const-values" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WatchRouteGuidance.swiftconstvalues",
+    "dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WatchRouteGuidance.d",
+    "diagnostics" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WatchRouteGuidance.dia",
+    "index-unit-output-path" : "/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WatchRouteGuidance.o",
+    "llvm-bc" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WatchRouteGuidance.bc",
+    "object" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WatchRouteGuidance.o",
+    "swift-dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WatchRouteGuidance.swiftdeps",
+    "swiftmodule" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WatchRouteGuidance~partial.swiftmodule"
+  },
+  "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/Shared/WorkoutClockSnapshot.swift" : {
+    "const-values" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WorkoutClockSnapshot.swiftconstvalues",
+    "dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WorkoutClockSnapshot.d",
+    "diagnostics" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WorkoutClockSnapshot.dia",
+    "index-unit-output-path" : "/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WorkoutClockSnapshot.o",
+    "llvm-bc" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WorkoutClockSnapshot.bc",
+    "object" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WorkoutClockSnapshot.o",
+    "swift-dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WorkoutClockSnapshot.swiftdeps",
+    "swiftmodule" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/WorkoutClockSnapshot~partial.swiftmodule"
+  },
+  "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/DerivedSources/GeneratedAssetSymbols.swift" : {
+    "const-values" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/GeneratedAssetSymbols.swiftconstvalues",
+    "dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/GeneratedAssetSymbols.d",
+    "diagnostics" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/GeneratedAssetSymbols.dia",
+    "index-unit-output-path" : "/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/GeneratedAssetSymbols.o",
+    "llvm-bc" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/GeneratedAssetSymbols.bc",
+    "object" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/GeneratedAssetSymbols.o",
+    "swift-dependencies" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/GeneratedAssetSymbols.swiftdeps",
+    "swiftmodule" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/build/Runwave.build/Debug/Runwave.build/Objects-normal/arm64/GeneratedAssetSymbols~partial.swiftmodule"
+  }
+}

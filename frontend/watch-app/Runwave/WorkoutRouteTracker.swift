@@ -56,6 +56,9 @@ final class WorkoutRouteTracker: NSObject, ObservableObject, CLLocationManagerDe
     private var isCurrentlyStopped = false
     private var lastSpeedSampleAt: TimeInterval = -10
     private var lastSpeedSample: Double?
+    #if DEBUG && targetEnvironment(simulator)
+    private var simulatorLocationSubscription: AnyCancellable?
+    #endif
 
     override init() {
         super.init()
@@ -110,6 +113,10 @@ final class WorkoutRouteTracker: NSObject, ObservableObject, CLLocationManagerDe
         if let activeStartedAt { activeDuration += Date().timeIntervalSince(activeStartedAt) }
         activeStartedAt = nil
         isActive = false
+        #if DEBUG && targetEnvironment(simulator)
+        simulatorLocationSubscription = nil
+        SimulatorWalkSource.shared.pause()
+        #endif
         locationManager.stopUpdatingLocation()
         #if os(iOS)
         locationManager.allowsBackgroundLocationUpdates = false
@@ -120,6 +127,15 @@ final class WorkoutRouteTracker: NSObject, ObservableObject, CLLocationManagerDe
     func resume() {
         guard !isActive else { return }
         isActive = true
+        #if DEBUG && targetEnvironment(simulator)
+        activeStartedAt = Date()
+        statusMessage = "仮の位置情報でナビゲーションを検証中"
+        simulatorLocationSubscription = SimulatorWalkSource.shared.$location.sink { [weak self] location in
+            self?.receiveLocations([location])
+        }
+        SimulatorWalkSource.shared.resume()
+        return
+        #else
         #if os(iOS)
         locationManager.allowsBackgroundLocationUpdates = true
         locationManager.showsBackgroundLocationIndicator = true
@@ -154,6 +170,7 @@ final class WorkoutRouteTracker: NSObject, ObservableObject, CLLocationManagerDe
                 self.publishMetrics()
             }
         }
+        #endif
     }
 
     func finish() -> (distance: Double?, averageCadence: Int?) {
@@ -178,6 +195,15 @@ final class WorkoutRouteTracker: NSObject, ObservableObject, CLLocationManagerDe
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        #if DEBUG && targetEnvironment(simulator)
+        return
+        #else
+        receiveLocations(locations)
+        #endif
+    }
+
+    /// 実機GPSとシミュレーターの仮想GPSで同じ距離・速度・ナビ処理を使う。
+    private func receiveLocations(_ locations: [CLLocation]) {
         guard isActive else { return }
         for location in locations where location.horizontalAccuracy >= 0 && location.horizontalAccuracy <= 25
             && abs(location.timestamp.timeIntervalSinceNow) <= 15 {
@@ -188,7 +214,12 @@ final class WorkoutRouteTracker: NSObject, ObservableObject, CLLocationManagerDe
             let previous = lastLocation
             lastLocation = location
             guard let activeStartedAt else { continue }
+            #if DEBUG && targetEnvironment(simulator)
+            // シミュレーターの走行記録も、2x/4xで進む仮想時計に揃える。
+            let elapsed = SimulatorWalkSource.shared.elapsed(at: location.timestamp)
+            #else
             let elapsed = activeDuration + location.timestamp.timeIntervalSince(activeStartedAt)
+            #endif
             guard elapsed >= 0 else { continue }
 
             var segment = 0.0
@@ -196,7 +227,12 @@ final class WorkoutRouteTracker: NSObject, ObservableObject, CLLocationManagerDe
             if let previous {
                 segment = location.distance(from: previous)
                 seconds = location.timestamp.timeIntervalSince(previous.timestamp)
-                if seconds > 0, segment >= 1, segment / seconds <= 8 {
+                #if DEBUG && targetEnvironment(simulator)
+                let validSegment = seconds > 0 && segment >= 1
+                #else
+                let validSegment = seconds > 0 && segment >= 1 && segment / seconds <= 8
+                #endif
+                if validSegment {
                     distanceM += segment
                     route.append(location.coordinate)
                     publishMetrics()
@@ -259,6 +295,9 @@ struct WorkoutRouteMap: View {
     let route: [CLLocationCoordinate2D]
     let goal: GoalPoint?
     var plannedRoute: MKRoute? = nil
+    #if DEBUG && targetEnvironment(simulator)
+    var simulatorSignals: [SimulatorSignalMarker] = []
+    #endif
 
     var body: some View {
         Map {
@@ -271,6 +310,12 @@ struct WorkoutRouteMap: View {
             if let first = route.first { Marker("スタート", coordinate: first).tint(.green) }
             if let last = route.last { Marker("現在地", coordinate: last).tint(.blue) }
             if let goal { Marker("ゴール", coordinate: goal.coordinate).tint(.red) }
+            #if DEBUG && targetEnvironment(simulator)
+            ForEach(simulatorSignals) { signal in
+                Marker(signal.title, systemImage: "mappin.circle.fill", coordinate: signal.coordinate)
+                    .tint(signal.color == .green ? .green : .red)
+            }
+            #endif
         }
         .mapStyle(.standard(elevation: .flat))
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))

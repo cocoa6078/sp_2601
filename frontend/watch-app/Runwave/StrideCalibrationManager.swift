@@ -69,6 +69,16 @@ final class StrideCalibrationManager: NSObject, ObservableObject, CLLocationMana
         return value > 0 ? value : nil
     }
 
+    #if DEBUG && targetEnvironment(simulator)
+    func skipForSimulator() {
+        // 検証値を保存せず、実機の初回測定とは独立させる。
+        walkingStrideM = 0.76
+        runningStrideM = 1.0
+        walkingCadence = 120
+        runningCadence = 160
+    }
+    #endif
+
     func start(mode: ActivityMode) {
         guard !isMeasuring else { return }
         guard CLLocationManager.locationServicesEnabled() else {

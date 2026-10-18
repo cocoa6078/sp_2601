@@ -10,6 +10,7 @@ final class IPhoneTempoOutputPlayer: ObservableObject {
     private struct Configuration {
         var cadence: Int
         var volume: Double
+        var sound: TempoSound
     }
 
     private var configuration: Configuration?
@@ -39,18 +40,18 @@ final class IPhoneTempoOutputPlayer: ObservableObject {
         }
     }
 
-    func update(isRunning: Bool, mode: TempoOutputMode, cadence: Int, volume: Double) {
+    func update(isRunning: Bool, mode: TempoOutputMode, cadence: Int, volume: Double, sound: TempoSound = .beep) {
         guard isRunning, mode == .iphoneAudio else {
             stop()
             return
         }
 
         let previous = configuration
-        configuration = Configuration(cadence: cadence, volume: volume)
+        configuration = Configuration(cadence: cadence, volume: volume, sound: sound)
         previewGeneration = UUID()
         previewTask?.cancel()
         previewTask = nil
-        if previous?.cadence == cadence, player?.isPlaying == true {
+        if previous?.cadence == cadence, previous?.sound == sound, player?.isPlaying == true {
             player?.volume = Float(min(max(volume, 0), 1))
             return
         }
@@ -72,7 +73,7 @@ final class IPhoneTempoOutputPlayer: ObservableObject {
         if force || player?.isPlaying != true { startWorkoutLoop(preservingPhaseFrom: nil) }
     }
 
-    func preview(cadence: Int, volume: Double) {
+    func preview(cadence: Int, volume: Double, sound: TempoSound = .beep) {
         errorMessage = nil
         configuration = nil
         player?.stop()
@@ -81,7 +82,7 @@ final class IPhoneTempoOutputPlayer: ObservableObject {
         let token = previewGeneration
         previewTask?.cancel()
         previewTask = Task { [weak self] in
-            await self?.playPreview(cadence: cadence, volume: volume, token: token)
+            await self?.playPreview(cadence: cadence, volume: volume, sound: sound, token: token)
         }
     }
 
@@ -100,6 +101,7 @@ final class IPhoneTempoOutputPlayer: ObservableObject {
             let replacement = try makeLoopingPlayer(
                 cadence: configuration.cadence,
                 volume: configuration.volume,
+                sound: configuration.sound,
                 firstBeatDelay: firstBeatDelay
             )
             player?.stop()
@@ -112,11 +114,8 @@ final class IPhoneTempoOutputPlayer: ObservableObject {
     }
 
     /// 効果音と無音を1周期にまとめてループし、画面消灯中も音声再生を継続する。
-    private func makeLoopingPlayer(cadence: Int, volume: Double, firstBeatDelay: TimeInterval) throws -> AVAudioPlayer {
-        guard let url = Bundle.main.url(forResource: "tempo-tick", withExtension: "wav") else {
-            throw CocoaError(.fileNoSuchFile)
-        }
-        let source = try Data(contentsOf: url)
+    private func makeLoopingPlayer(cadence: Int, volume: Double, sound: TempoSound, firstBeatDelay: TimeInterval) throws -> AVAudioPlayer {
+        let source = try sound.wavData()
         let sampleRate = 22_050
         guard source.count > 44 else { throw CocoaError(.fileReadCorruptFile) }
         let tick = source.subdata(in: 44..<source.count)
@@ -143,7 +142,7 @@ final class IPhoneTempoOutputPlayer: ObservableObject {
         return loop
     }
 
-    private func playPreview(cadence: Int, volume: Double, token: UUID) async {
+    private func playPreview(cadence: Int, volume: Double, sound: TempoSound, token: UUID) async {
         defer {
             if previewGeneration == token {
                 player?.stop()
@@ -153,12 +152,10 @@ final class IPhoneTempoOutputPlayer: ObservableObject {
             }
         }
         do {
-            guard let url = Bundle.main.url(forResource: "tempo-tick", withExtension: "wav") else {
-                throw CocoaError(.fileNoSuchFile)
-            }
+            let data = try sound.wavData()
             try audioSession.setCategory(.playback, mode: .default, options: [.mixWithOthers])
             try audioSession.setActive(true)
-            let prepared = try AVAudioPlayer(contentsOf: url)
+            let prepared = try AVAudioPlayer(data: data)
             prepared.volume = Float(min(max(volume, 0), 1))
             guard prepared.prepareToPlay() else { throw CocoaError(.fileReadUnknown) }
             player = prepared

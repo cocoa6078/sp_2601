@@ -23,8 +23,13 @@ struct GoalPoint: Equatable {
     var latitude: Double
     var longitude: Double
 
-    /// 初期表示の中心（札幌駅付近）
-    static let sapporoStation = GoalPoint(latitude: 43.0687, longitude: 141.3508)
+    /// 発表デモの出発地点（GeoJSONの1地点目）
+    static let simulatorStart = GoalPoint(latitude: 43.0721852, longitude: 141.3490445)
+    /// GeoJSONの2地点目にある信号。
+    static let simulatorSignal = GoalPoint(latitude: 43.0713260, longitude: 141.3492470)
+    /// ゴールへ曲がる手前の3地点目。
+    static let simulatorTurn = GoalPoint(latitude: 43.0707589, longitude: 141.3493924)
+    static let simulatorGoal = GoalPoint(latitude: 43.0706678, longitude: 141.3488368)
 
     /// 緯度経度として有効か（NaN / 範囲外を弾く）
     var isValid: Bool {
@@ -70,7 +75,7 @@ struct GoalPreviewMap: View {
     }
 
     private var displayRegion: MKCoordinateRegion {
-        let fallback = GoalPoint.sapporoStation.coordinate
+        let fallback = GoalPoint.simulatorStart.coordinate
         guard let goal, let currentLocation else {
             let center = currentLocation ?? goal?.coordinate ?? fallback
             return MKCoordinateRegion(
@@ -114,14 +119,27 @@ final class CurrentLocationObserver: NSObject, ObservableObject, CLLocationManag
     @Published private(set) var isDenied = false
 
     private let manager = CLLocationManager()
+    #if DEBUG && targetEnvironment(simulator)
+    private var simulatorLocationSubscription: AnyCancellable?
+    #endif
 
     override init() {
         super.init()
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyBest
+        #if DEBUG && targetEnvironment(simulator)
+        simulatorLocationSubscription = SimulatorWalkSource.shared.$location.sink { [weak self] location in
+            self?.coordinate = location.coordinate
+        }
+        #endif
     }
 
     func start() {
+        #if DEBUG && targetEnvironment(simulator)
+        coordinate = SimulatorWalkSource.shared.location.coordinate
+        isDenied = false
+        return
+        #else
         isDenied = manager.authorizationStatus == .denied || manager.authorizationStatus == .restricted
         switch manager.authorizationStatus {
         case .notDetermined:
@@ -133,6 +151,7 @@ final class CurrentLocationObserver: NSObject, ObservableObject, CLLocationManag
         @unknown default:
             break
         }
+        #endif
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
@@ -147,11 +166,15 @@ final class CurrentLocationObserver: NSObject, ObservableObject, CLLocationManag
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        #if DEBUG && targetEnvironment(simulator)
+        return
+        #else
         guard let location = locations.last,
               location.horizontalAccuracy >= 0,
               location.horizontalAccuracy <= 50,
               abs(location.timestamp.timeIntervalSinceNow) <= 30 else { return }
         coordinate = location.coordinate
+        #endif
     }
 }
 
@@ -174,6 +197,9 @@ struct GoalMapView: View {
     @State private var centeredOnCurrentLocation: Bool
     @StateObject private var planner = WalkingRoutePlanner()
     @State private var routeSearchID = UUID()
+    #if DEBUG && targetEnvironment(simulator)
+    @ObservedObject private var simulatorSignalSystem = SimulatorSignalSystem.shared
+    #endif
 
     init(
         initialGoal: GoalPoint?,
@@ -186,7 +212,7 @@ struct GoalMapView: View {
         _locationObserver = ObservedObject(wrappedValue: locationObserver)
         let center = locationObserver.coordinate.map {
             GoalPoint(latitude: $0.latitude, longitude: $0.longitude)
-        } ?? initialGoal ?? GoalPoint.sapporoStation
+        } ?? initialGoal ?? GoalPoint.simulatorStart
         _position = State(initialValue: MapCameraPosition.region(center.region(span: 0.02)))
         _pending = State(initialValue: initialGoal)
         _centeredOnCurrentLocation = State(initialValue: locationObserver.coordinate != nil)
@@ -204,10 +230,20 @@ struct GoalMapView: View {
             guard let pending, let source = locationObserver.coordinate else { return }
             do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
             await planner.calculate(from: source, to: pending)
-            if let route = planner.selectedRoute { position = .rect(route.polyline.boundingMapRect) }
+            if let route = planner.selectedRoute {
+                position = .rect(route.polyline.boundingMapRect)
+                #if DEBUG && targetEnvironment(simulator)
+                simulatorSignalSystem.prepare(route: route)
+                #endif
+            }
         }
         .onChange(of: planner.selectedIndex) { _, _ in
-            if let route = planner.selectedRoute { position = .rect(route.polyline.boundingMapRect) }
+            if let route = planner.selectedRoute {
+                position = .rect(route.polyline.boundingMapRect)
+                #if DEBUG && targetEnvironment(simulator)
+                simulatorSignalSystem.prepare(route: route)
+                #endif
+            }
         }
     }
 
@@ -290,6 +326,12 @@ struct GoalMapView: View {
                     MapPolyline(planner.routes[index].polyline)
                         .stroke(planner.selectedIndex == index ? Color.cyan : Color.gray.opacity(0.6), lineWidth: planner.selectedIndex == index ? 6 : 3)
                 }
+                #if DEBUG && targetEnvironment(simulator)
+                ForEach(simulatorSignalSystem.markers) { signal in
+                    Marker(signal.title, systemImage: "mappin.circle.fill", coordinate: signal.coordinate)
+                        .tint(signal.color == .green ? .green : .red)
+                }
+                #endif
                 if let coordinate = locationObserver.coordinate {
                     Marker("現在地", systemImage: "location.fill", coordinate: coordinate)
                         .tint(.blue)

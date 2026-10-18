@@ -266,6 +266,11 @@ final class SessionStore: ObservableObject {
     private var clockSubscription: AnyCancellable?
     private var lastNavigationSentAt = Date.distantPast
     private var lastNavigationFingerprint = ""
+    #if DEBUG && targetEnvironment(simulator)
+    @Published private(set) var simulatorRouteError: String?
+    private var isPreparingSimulatorRoute = false
+    private var simulatorGuidanceSignalID: Int?
+    #endif
 
     // MARK: 経過時間（iPhone の時計で積算。一時停止中は増えない）
     private var accumulated: TimeInterval = 0
@@ -292,6 +297,9 @@ final class SessionStore: ObservableObject {
         routeTracker.onLocation = { [weak self] location in
             guard let self else { return }
             self.navigation.update(location)
+            #if DEBUG && targetEnvironment(simulator)
+            self.updateSimulatorSignals(at: location.timestamp)
+            #endif
             self.checkGoalApproach(self.routeTracker.distanceToGoalM)
         }
 
@@ -361,10 +369,8 @@ final class SessionStore: ObservableObject {
         let title: String
         if navigation.isRecalculating { title = "経路を再検索中" }
         else if navigation.isOffRoute { title = "経路を確認" }
-        else if symbol == "arrow.turn.up.right" { title = "右方向です" }
-        else if symbol == "arrow.turn.up.left" { title = "左方向です" }
         else if symbol == "flag.checkered" { title = "ゴールへ" }
-        else { title = "道なりに進む" }
+        else { title = navigation.instruction }
         let next = navigation.distanceToManeuver.map { ($0 / 5).rounded() * 5 }
         let remaining = navigation.remainingDistance.map { ($0 / 10).rounded() * 10 }
         let fingerprint = "\(sessionID):\(title):\(next ?? -1):\(remaining ?? -1)"
@@ -383,16 +389,20 @@ final class SessionStore: ObservableObject {
 
     /// 指定時刻での経過時間（秒）。TimelineView から毎秒呼ばれる。
     func elapsed(at now: Date) -> TimeInterval {
+        #if DEBUG && targetEnvironment(simulator)
+        return SimulatorWalkSource.shared.elapsed(at: now)
+        #else
         if let started = runStartedAt {
             return accumulated + max(0, now.timeIntervalSince(started))
         }
         return accumulated
+        #endif
     }
 
     // MARK: 目標ケイデンス
 
     var cadenceRange: ClosedRange<Int> {
-        activityMode == .walking ? 80...140 : 110...190
+        activityMode == .walking ? 80...140 : 80...190
     }
 
     /// 外部から届いた絶対値を設定する。
@@ -403,6 +413,9 @@ final class SessionStore: ObservableObject {
         targetCadence = bounded
         cadenceAdjustment = bounded - cadenceBaseline
         guidedCadence = nil
+        #if DEBUG && targetEnvironment(simulator)
+        SimulatorWalkSource.shared.setPace(mode: activityMode, cadence: targetCadence)
+        #endif
         // ホームでの変更は「開始時」にまとめて送る。セッション中だけ即時送信する。
         if workoutState == .running || workoutState == .paused {
             sendCurrentTarget()
@@ -417,6 +430,9 @@ final class SessionStore: ObservableObject {
         targetCadence = bounded
         cadenceAdjustment = bounded - cadenceBaseline
         guidedCadence = nil
+        #if DEBUG && targetEnvironment(simulator)
+        SimulatorWalkSource.shared.setPace(mode: activityMode, cadence: targetCadence)
+        #endif
         updateIPhoneTempoOutput()
     }
 
@@ -430,21 +446,47 @@ final class SessionStore: ObservableObject {
         cadenceAdjustment = next - cadenceBaseline
         targetCadence = next
         guidedCadence = nil
+        #if DEBUG && targetEnvironment(simulator)
+        SimulatorWalkSource.shared.setPace(mode: activityMode, cadence: targetCadence)
+        #endif
         if workoutState == .running || workoutState == .paused { sendCurrentTarget() }
         updateIPhoneTempoOutput()
     }
 
     /// 信号制御が選んだ案内値をWatchへ反映する。nilなら通常目標に戻す。
     func setSignalGuidanceCadence(_ value: Int?) {
+        guard value != guidedCadence else { return }
         if let value {
             let range = cadenceRange
             guidedCadence = min(max(value, range.lowerBound), range.upperBound)
         } else {
             guidedCadence = nil
         }
+        // The simulator movement integrator applies signal guidance itself;
+        // its normal target remains separate from the temporary reduced cadence.
         if workoutState == .running || workoutState == .paused { sendCurrentTarget() }
         updateIPhoneTempoOutput()
     }
+
+    #if DEBUG && targetEnvironment(simulator)
+    private func updateSimulatorSignals(at date: Date) {
+        guard workoutState == .running else { return }
+        let system = SimulatorSignalSystem.shared
+        system.update(
+            distance: SimulatorWalkSource.shared.distance,
+            elapsed: SimulatorWalkSource.shared.elapsed,
+            mode: activityMode,
+            cadence: targetCadence,
+            isForcedStopped: SimulatorWalkSource.shared.isPedestrianForcedStopped,
+            currentCadence: SimulatorWalkSource.shared.currentPaceCadence
+        )
+        let signalID = system.activeSignalID
+        simulatorGuidanceSignalID = signalID
+        setSignalGuidanceCadence(system.recommendedCadence)
+        receiveSignal(system.activeSignal)
+        updateIPhoneTempoOutput()
+    }
+    #endif
 
     // MARK: Watch のテンポ出力
 
@@ -467,6 +509,12 @@ final class SessionStore: ObservableObject {
         updateOutputSettings(settings)
     }
 
+    func setTempoSound(_ sound: TempoSound) {
+        var settings = outputSettings
+        settings.sound = sound
+        updateOutputSettings(settings)
+    }
+
     private func updateOutputSettings(_ settings: TempoOutputSettings) {
         guard settings != outputSettings else { return }
         outputSettings = settings
@@ -479,7 +527,7 @@ final class SessionStore: ObservableObject {
     func previewOutput() {
         guard outputSettings.mode != .off else { return }
         if outputSettings.mode == .iphoneAudio {
-            iphoneTempoOutputPlayer.preview(cadence: guidedCadence ?? targetCadence, volume: outputSettings.volume)
+            iphoneTempoOutputPlayer.preview(cadence: guidedCadence ?? targetCadence, volume: outputSettings.volume, sound: outputSettings.sound)
             return
         }
         guard connectionState == .connected else { return }
@@ -487,11 +535,19 @@ final class SessionStore: ObservableObject {
     }
 
     private func updateIPhoneTempoOutput() {
+        var moving = workoutState == .running
+        var cadence = guidedCadence ?? targetCadence
+        #if DEBUG && targetEnvironment(simulator)
+        let source = SimulatorWalkSource.shared
+        moving = moving && source.isRunning && !source.isPedestrianForcedStopped && !source.isWaitingAtSignal
+        cadence = max(1, Int(source.currentPaceCadence.rounded()))
+        #endif
         iphoneTempoOutputPlayer.update(
-            isRunning: workoutState == .running,
+            isRunning: moving,
             mode: outputSettings.mode,
-            cadence: guidedCadence ?? targetCadence,
-            volume: outputSettings.volume
+            cadence: cadence,
+            volume: outputSettings.volume,
+            sound: outputSettings.sound
         )
     }
 
@@ -507,7 +563,50 @@ final class SessionStore: ObservableObject {
         guard point.isValid else { return }
         navigation.select(route)
         goal = point
+        #if DEBUG && targetEnvironment(simulator)
+        if let route {
+            SimulatorWalkSource.shared.prepare(route)
+            SimulatorSignalSystem.shared.prepare(route: route)
+        }
+        #endif
     }
+
+    #if DEBUG && targetEnvironment(simulator)
+    func prepareSimulatorRoute() async {
+        guard goal == nil, !isPreparingSimulatorRoute else { return }
+        isPreparingSimulatorRoute = true
+        simulatorRouteError = nil
+        defer { isPreparingSimulatorRoute = false }
+        // 発表デモ: 1地点目から4地点目へ進み、2地点目の信号を通過する。
+        let destination = GoalPoint.simulatorGoal
+        let request = MKDirections.Request()
+        request.source = MKMapItem(placemark: MKPlacemark(coordinate: SimulatorWalkSource.shared.location.coordinate))
+        request.destination = MKMapItem(placemark: MKPlacemark(coordinate: destination.coordinate))
+        request.transportType = .walking
+        request.requestsAlternateRoutes = true
+        do {
+            let response = try await MKDirections(request: request).calculate()
+            guard !Task.isCancelled, goal == nil else { return }
+            // 指定された信号と曲がり角の近くを通るApple Mapsの徒歩経路を選ぶ。
+            // 別の道路へ迂回して信号が経路から外れたまま開始しない。
+            let waypoints = [GoalPoint.simulatorSignal.coordinate, GoalPoint.simulatorTurn.coordinate]
+            let matchingRoutes = response.routes.filter { route in
+                let path = NavigationPath(route.polyline)
+                return waypoints.allSatisfy { coordinate in
+                    guard let projection = path.projection(of: coordinate) else { return false }
+                    return projection.separation <= 30
+                }
+            }
+            guard let route = matchingRoutes.min(by: { $0.distance < $1.distance }) else {
+                simulatorRouteError = "指定した信号と曲がり角を通る徒歩経路が見つかりません。「目的地を選ぶ」から経路を確認してください。"
+                return
+            }
+            setGoal(destination, route: route)
+        } catch {
+            simulatorRouteError = "確認用ルートを取得できませんでした。「目的地を選ぶ」から設定してください。"
+        }
+    }
+    #endif
 
     /// 終了地点を未設定に戻す。
     func clearGoal() {
@@ -573,6 +672,14 @@ final class SessionStore: ObservableObject {
         routeTracker.goal = goal
         navigation.start(goal: goal)
         updateIPhoneTempoOutput()
+        #if DEBUG && targetEnvironment(simulator)
+        simulatorGuidanceSignalID = nil
+        if let route = navigation.selectedRoute {
+            SimulatorWalkSource.shared.prepare(route)
+            SimulatorWalkSource.shared.setPace(mode: mode, cadence: targetCadence)
+            SimulatorSignalSystem.shared.prepare(route: route)
+        }
+        #endif
         routeTracker.start()
         link.updateOutputSettings(outputSettings)
         sendCurrentTarget()
@@ -582,7 +689,7 @@ final class SessionStore: ObservableObject {
     }
 
     private func normalizedCadence(_ value: Int) -> Int {
-        let range = activityMode == .walking ? 80...140 : 110...190
+        let range = activityMode == .walking ? 80...140 : 80...190
         return min(max(value, range.lowerBound), range.upperBound)
     }
 
@@ -651,6 +758,9 @@ final class SessionStore: ObservableObject {
         goalApproachPresentedThisSession = true
         goalApproachDistanceM = max(0, distance)
         showGoalApproach = true
+        #if DEBUG && targetEnvironment(simulator)
+        SimulatorWalkSource.shared.pause()
+        #endif
         sendWorkoutClock()
         link.workoutDidReachGoal(distanceToGoal: goalApproachDistanceM)
         announceGoal()
@@ -662,6 +772,9 @@ final class SessionStore: ObservableObject {
         if workoutState == .running {
             sendWorkoutClock()
             navigation.resume()
+            #if DEBUG && targetEnvironment(simulator)
+            SimulatorWalkSource.shared.resume()
+            #endif
             link.workoutDidContinueAfterGoal()
         }
     }
@@ -692,6 +805,10 @@ final class SessionStore: ObservableObject {
         resetMetrics()
         routeTracker.reset()
         resetSignal()
+        #if DEBUG && targetEnvironment(simulator)
+        simulatorGuidanceSignalID = nil
+        SimulatorSignalSystem.shared.reset()
+        #endif
         screen = .home
     }
 
@@ -713,10 +830,16 @@ final class SessionStore: ObservableObject {
 
     /// 動いている時計を止めて accumulated に取り込む。
     private func freezeElapsed() {
+        #if DEBUG && targetEnvironment(simulator)
+        accumulated = SimulatorWalkSource.shared.elapsed(at: Date())
+        runStartedAt = nil
+        return
+        #else
         if let started = runStartedAt {
             accumulated += max(0, Date().timeIntervalSince(started))
         }
         runStartedAt = nil
+        #endif
     }
 
     // MARK: Watch からの入力
@@ -955,6 +1078,13 @@ private struct HomeView: View {
 
                 goalCard
 
+                #if DEBUG && targetEnvironment(simulator)
+                SimulatorWalkCard(isSession: false)
+                if let message = store.simulatorRouteError {
+                    Text(message).font(.caption).foregroundStyle(.orange)
+                }
+                #endif
+
                 VStack(alignment: .leading, spacing: 12) {
                     Text("測定した自然なケイデンス")
                         .font(.subheadline)
@@ -1032,46 +1162,36 @@ private struct HomeView: View {
             if store.goalSetupRequested { showGoalMap = true }
         }
         .onDisappear { currentLocation.stop() }
+        #if DEBUG && targetEnvironment(simulator)
+        .task { await store.prepareSimulatorRoute() }
+        #endif
     }
 
     /// 終了地点カード（必須項目）。
     private var goalCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("終了地点（必須）")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-
-            GoalPreviewMap(goal: store.goal, currentLocation: currentLocation.coordinate, plannedRoute: store.navigation.selectedRoute)
-                .frame(height: 140)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-
-            if currentLocation.coordinate == nil {
-                Label(
-                    currentLocation.isDenied ? "位置情報を許可すると現在地を表示します" : "現在地を取得中",
-                    systemImage: "location"
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Button {
+                showGoalMap = true
+            } label: {
+                HStack {
+                    Image(systemName: "map.fill")
+                    Text("目的地を選ぶ")
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                }
+                .font(.headline)
+                .frame(maxWidth: .infinity, minHeight: 48)
             }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .tint(.green)
 
             if let goal = store.goal {
                 Text(store.navigation.selectedRoute.map { "徒歩ルート \($0.distance.formattedRouteDistance)・曲がり角を音声で案内" } ?? goal.coordinateText)
                     .font(.footnote)
                     .monospacedDigit()
                     .foregroundColor(.secondary)
-            } else {
-                Text(currentLocation.coordinate == nil ? "現在地を取得中・終了地点は未設定です" : "終了地点は未設定です")
-                    .font(.subheadline.bold())
-                    .foregroundColor(.secondary)
             }
-
-            Button {
-                showGoalMap = true
-            } label: {
-                Label("地図で終了地点・経路を設定", systemImage: "map")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(20)
@@ -1407,6 +1527,15 @@ private struct FirstStrideSetupView: View {
                     StrideCalibrationCard(store: store, calibration: calibration, mode: mode)
                     Text("初回測定後にメイン画面が使えるようになります。未測定の運動は開始できません。")
                         .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    #if DEBUG && targetEnvironment(simulator)
+                    Button("シミュレーター用にスキップ") {
+                        calibration.skipForSimulator()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.cyan)
+                    Text("検証用の歩幅・ケイデンスでナビを確認します。測定値としては保存しません。")
+                        .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    #endif
                 }.padding(20)
             }
             .navigationBarTitleDisplayMode(.inline)
@@ -1421,6 +1550,9 @@ private struct SessionView: View {
     @ObservedObject var store: SessionStore
     @ObservedObject var routeTracker: WorkoutRouteTracker
     @ObservedObject var navigation: RouteNavigation
+    #if DEBUG && targetEnvironment(simulator)
+    @ObservedObject private var simulatorWalk = SimulatorWalkSource.shared
+    #endif
     @State private var showEndConfirm = false
 
     init(store: SessionStore) {
@@ -1448,7 +1580,7 @@ private struct SessionView: View {
                         .foregroundColor(.secondary)
                     HStack(alignment: .center) {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Text("\(store.targetCadence)")
+                            Text("\(store.guidedCadence ?? store.targetCadence)")
                                 .font(.system(size: 52, weight: .bold, design: .rounded))
                                 .monospacedDigit()
                             Text("歩/分")
@@ -1460,7 +1592,13 @@ private struct SessionView: View {
                             Text("現在")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            Text(store.latestMetrics?.currentCadence.map(String.init) ?? "--")
+                            Group {
+                                #if DEBUG && targetEnvironment(simulator)
+                                Text("\(simulatorWalk.simulatedCadence)")
+                                #else
+                                Text(store.latestMetrics?.currentCadence.map(String.init) ?? "--")
+                                #endif
+                            }
                                 .font(.system(size: 28, weight: .semibold, design: .rounded))
                                 .monospacedDigit()
                                 .foregroundStyle(.cyan)
@@ -1476,8 +1614,22 @@ private struct SessionView: View {
                 .background(CardBackground())
 
                 NavigationInstructionCard(navigation: navigation)
+                #if DEBUG && targetEnvironment(simulator)
+                WorkoutRouteMap(
+                    route: routeTracker.route,
+                    goal: store.goal,
+                    plannedRoute: navigation.selectedRoute,
+                    simulatorSignals: SimulatorSignalSystem.shared.markers
+                )
+                .frame(height: 210)
+                #else
                 WorkoutRouteMap(route: routeTracker.route, goal: store.goal, plannedRoute: navigation.selectedRoute)
                     .frame(height: 210)
+                #endif
+
+                #if DEBUG && targetEnvironment(simulator)
+                SimulatorWalkCard(isSession: true)
+                #endif
 
                 // 心拍数はWatchのHealthKitワークアウトで取得する。
                 MetricCard(
@@ -1485,6 +1637,9 @@ private struct SessionView: View {
                     display: store.metricDisplay(store.latestMetrics?.heartRate, unit: "拍/分")
                 )
 
+                #if DEBUG && targetEnvironment(simulator)
+                SimulatorSignalCard(system: SimulatorSignalSystem.shared)
+                #else
                 /* 信号連携を再開するときは、このブロックのコメントを外す。
                 VStack(alignment: .leading, spacing: 12) {
                     SignalLightView(signal: store.latestSignal)
@@ -1493,6 +1648,7 @@ private struct SessionView: View {
                 .padding(16)
                 .background(CardBackground())
                 */
+                #endif
                 HStack {
                     Label("距離", systemImage: "figure.run")
                         .foregroundStyle(.secondary)
@@ -1581,45 +1737,64 @@ private struct SessionView: View {
     }
 
     private var controls: some View {
-        HStack(spacing: 12) {
-            if store.workoutState == .paused {
-                Button {
-                    store.resume()
-                } label: {
-                    Text("再開")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .tint(.green)
-            } else {
-                Button {
-                    store.pause()
-                } label: {
-                    Text("一時停止")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .tint(.orange)
-                .disabled(store.workoutState != .running)
-            }
-
+        VStack(spacing: 8) {
+            #if DEBUG && targetEnvironment(simulator)
             Button {
-                showEndConfirm = true
+                simulatorWalk.setPedestrianForcedStopped(!simulatorWalk.isPedestrianForcedStopped)
             } label: {
-                Text("終了")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
+                Label(
+                    simulatorWalk.isPedestrianForcedStopped ? "歩行者を再開" : "歩行者を強制停止",
+                    systemImage: simulatorWalk.isPedestrianForcedStopped ? "figure.walk" : "hand.raised.fill"
+                )
+                .font(.subheadline.bold())
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
             }
             .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .tint(.red)
+            .controlSize(.regular)
+            .tint(simulatorWalk.isPedestrianForcedStopped ? .green : .orange)
+            #endif
+
+            HStack(spacing: 12) {
+                if store.workoutState == .paused {
+                    Button {
+                        store.resume()
+                    } label: {
+                        Text("再開")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 6)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .tint(.green)
+                } else {
+                    Button {
+                        store.pause()
+                    } label: {
+                        Text("一時停止")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 6)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .tint(.orange)
+                    .disabled(store.workoutState != .running)
+                }
+
+                Button {
+                    showEndConfirm = true
+                } label: {
+                    Text("終了")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .tint(.red)
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)

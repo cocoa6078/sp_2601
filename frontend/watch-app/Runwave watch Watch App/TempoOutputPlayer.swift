@@ -35,6 +35,7 @@ final class TempoOutputPlayer: ObservableObject {
             return
         }
         guard previous?.cadence != configuration.cadence
+                || previous?.settings.sound != configuration.settings.sound
                 || previous?.settings.volume != configuration.settings.volume
                 || backgroundAudioPlayer?.isPlaying != true else { return }
         let token = UUID()
@@ -76,12 +77,10 @@ final class TempoOutputPlayer: ObservableObject {
 
         if initialSettings.mode == .audio {
             do {
-                guard let url = Bundle.main.url(forResource: "tempo-tick", withExtension: "wav") else {
-                    throw CocoaError(.fileNoSuchFile)
-                }
+                let data = try initialSettings.sound.wavData()
                 try audioSession.setCategory(.playback, mode: .default, policy: .default, options: [.mixWithOthers])
                 try audioSession.setActive(true)
-                let prepared = try AVAudioPlayer(contentsOf: url)
+                let prepared = try AVAudioPlayer(data: data)
                 prepared.volume = Float(initialSettings.volume)
                 guard prepared.prepareToPlay() else { throw CocoaError(.fileReadUnknown) }
                 previewPlayer = prepared
@@ -148,10 +147,7 @@ final class TempoOutputPlayer: ObservableObject {
         token: UUID
     ) async {
         do {
-            guard let url = Bundle.main.url(forResource: "tempo-tick", withExtension: "wav") else {
-                throw CocoaError(.fileNoSuchFile)
-            }
-            let source = try Data(contentsOf: url)
+            let source = try configuration.settings.sound.wavData()
             let sampleRate = 22_050
             guard source.count > 44 else { throw CocoaError(.fileReadCorruptFile) }
             let tick = source.subdata(in: 44..<source.count)

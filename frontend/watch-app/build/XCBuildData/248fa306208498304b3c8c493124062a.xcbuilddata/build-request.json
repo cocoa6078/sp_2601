@@ -1,0 +1,42 @@
+{
+  "buildCommand" : {
+    "command" : "build",
+    "skipDependencies" : false,
+    "style" : "buildAndRun"
+  },
+  "configuredTargets" : [
+    {
+      "guid" : "345dc7495bb7ae62ff33d8a086e2f4679ce0d7c77c2c6394e57b01314792398e"
+    }
+  ],
+  "containerPath" : "/Users/yuta/program/JPHACKS2026_/sp_2601/frontend/watch-app/Runwave.xcodeproj",
+  "continueBuildingAfterErrors" : false,
+  "dependencyScope" : "workspace",
+  "enableIndexBuildArena" : false,
+  "hideShellScriptEnvironment" : false,
+  "parameters" : {
+    "action" : "build",
+    "configurationName" : "Debug",
+    "overrides" : {
+      "commandLine" : {
+        "table" : {
+          "CLANG_MODULE_CACHE_PATH" : "/private/tmp/runwave-clang-cache",
+          "CODE_SIGNING_ALLOWED" : "NO",
+          "SWIFT_MODULE_CACHE_PATH" : "/private/tmp/runwave-swift-cache"
+        }
+      },
+      "synthesized" : {
+        "table" : {
+          "ACTION" : "build",
+          "ENABLE_PREVIEWS" : "NO",
+          "ENABLE_XOJIT_PREVIEWS" : "NO"
+        }
+      }
+    }
+  },
+  "showNonLoggedProgress" : true,
+  "useDryRun" : false,
+  "useImplicitDependencies" : false,
+  "useLegacyBuildLocations" : false,
+  "useParallelTargets" : true
+}

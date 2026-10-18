@@ -1,0 +1,4 @@
+Target dependency graph (2 targets)
+Target 'Runwave' in project 'Runwave'
+➜ Explicit dependency on target 'Runwave watch Watch App' in project 'Runwave'
+Target 'Runwave watch Watch App' in project 'Runwave' (no dependencies)
