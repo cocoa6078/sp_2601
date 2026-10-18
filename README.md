@@ -4,7 +4,14 @@
 
 RUNWAVE は、信号の青の時間帯に合わせて目標ケイデンスを調整するランニング支援プロトタイプです。目指すのは、普段の走り方をなるべく保ちながら、停止によるリズムの中断を減らすことです。自分のリズムで走り続けられる感覚や、信号の直前に急ぐことを減らした心理的な快適さも、検証したい価値として位置づけています。
 
-現在は、模擬経路・模擬信号で通常走行と RUNWAVE を比較する **Web シミュレーター**、仕組みを画面収録向けに見せる **発表用連動デモ**、および **iPhone / Apple Watch アプリのソース**を開発しています。機能ごとの接続状況と確認範囲は「現在の実装範囲」を参照してください。表示する信号・結果はモデル上の推定値であり、実際の信号の点灯状況とは同期していません。
+現在は、模擬経路・模擬信号で通常走行と RUNWAVE を比較する **Web シミュレーター**、仕組みを画面収録向けに見せる **発表用連動デモ**、参考信号などを返す **バックエンド API**、および **iPhone / Apple Watch アプリのソース**を開発しています。機能ごとの接続状況と確認範囲は「現在の実装範囲」を参照してください。表示する信号・結果はモデル上の推定値であり、実際の信号の点灯状況とは同期していません。
+
+公開中のページ（GitHub Pages。`main` への push で自動ビルド）:
+
+- Web シミュレーター: <https://jphacks.github.io/sp_2601/web-simulator/>
+- 開発ダッシュボード: <https://jphacks.github.io/sp_2601/dev-dashboard/>
+
+公開の仕組みと設定は [docs/GITHUB_PAGES.md](docs/GITHUB_PAGES.md) を参照してください。
 
 > **安全上の注意**: RUNWAVE の出力は実際の信号と同期せず、横断の案内・判断には使えません。実際の道路では交通ルール、信号表示、周囲の状況に従い、出力を根拠に横断したり、信号に間に合わせるために速度を上げたりしないでください。
 
@@ -20,7 +27,7 @@ RUNWAVE は、信号の青の時間帯に合わせて目標ケイデンスを調
 
 歩幅・通常ケイデンス・交差点までの距離・信号周期をもとに、青の時間帯に到着するための目標ケイデンスを計算します。BPM はここでは **歩/分（1 拍 = 1 歩）**を表し、心拍数とは別の値です。
 
-Web では、地図上に開始地点・終了地点・経由点を置いて模擬経路を作り、通常走行と RUNWAVE を並べて再生できます。固定デモ A/B/W に加え、任意コースでは 2〜5 件の信号を連続して通過するシミュレーションに対応しています。停止回数・停止時間・総所要時間や早歩きの状況を比較し、条件と結果を JSON に保存できます。詳細は [Web シミュレーターの README](frontend/web-simulator/README.md) を参照してください。
+Web では、地図上に開始地点・終了地点・経由点を置いて模擬経路を作り、通常走行と RUNWAVE を並べて再生できます。固定デモ A/B/W に加え、任意コースでは 2〜5 件の信号を連続して通過するシミュレーションに対応しています。停止回数・停止時間・総所要時間や早歩きの状況を比較し、条件と結果を JSON に、0.1 秒ごとの時系列を CSV に保存できます。再生は 1 / 2 / 4 / 5 倍速で、倍率を変えても同じ模擬時刻の結果は一致します。詳細は [Web シミュレーターの README](frontend/web-simulator/README.md) を参照してください。
 
 iPhone / Apple Watch 側には、歩幅・自然なケイデンスの校正、位置・歩数による走行計測、セッション結果表示、端末間通信、テンポ提示などのソース実装があります。iPhone シミュレーターの DEBUG ビルドには、デモ用の仮想信号と信号に応じた歩調ガイダンスもありますが、製品データ経路には接続されていません。**Web / core の信号計算から実機の案内までをつなぐ一連の連携は未完成で、これらの機能を実機で確認した記録もありません。**
 
@@ -77,7 +84,7 @@ iPhone / Apple Watch 側には、歩幅・自然なケイデンスの校正、�
 
 #### API・データ
 
-- 自作の Express API：参考信号、キャリブレーション、走行ログを提供します。[バックエンド実装](backend/index.js)
+- 自作の Express API：参考信号、経路に沿った信号の照合（along-route）、キャリブレーション、走行ログ、セッション案内の中継を提供します。公開デモ向けに、書き込みの禁止・入力値の検査・回数制限・書き込みトークンを入れています。[バックエンド実装](backend/index.js)・[API の説明](backend/README.md)
 - JARTIC 由来の車両用信号データを加工した参考プリセット：デモ API の位相は仮に 15 秒ずつずらし、`isEstimated: true` を付けています。歩行者信号の実際の点灯情報ではありません。
 - API なしで使える [模擬信号 fixture](frontend/web-simulator/src/fixtures.js)：固定デモとは別に、地図でのコース作成に使えます。
 - OpenStreetMap の背景地図タイルと Leaflet：経路と信号の表示に利用します。経路は指定点を結ぶ折れ線であり、歩道の通行可能性や実際の道路距離を保証する経路探索ではありません。
@@ -90,7 +97,8 @@ JARTIC のオープンデータは、[公式データ提供ページ](https://ww
 | --- | --- |
 | 計算 core | JavaScript ES Modules、Node.js 標準テストランナー |
 | Web / 開発ダッシュボード | Vite、JavaScript、HTML / CSS、Leaflet（Web） |
-| バックエンド | Node.js、Express、cors、ローカル JSON ファイルによるログ保存 |
+| バックエンド | Node.js、Express、cors、crypto（書き込みトークン）、ローカル JSON ファイルによるログ保存、Vercel |
+| 公開 | GitHub Actions、GitHub Pages（Web シミュレーター・開発ダッシュボード） |
 | iPhone / Watch | SwiftUI、WatchConnectivity、MapKit、CoreMotion、CoreLocation、WatchKit、HealthKit、AVFoundation |
 
 #### デバイス
@@ -111,14 +119,15 @@ JARTIC のオープンデータは、[公式データ提供ページ](https://ww
 
 ## 現在の実装範囲
 
-2026 年 10 月 18 日時点で確認したローカルソースを基準にしています。ここで「実装」はソースに処理があることを指し、実機での動作確認を意味しません。Web の発表用シミュレーターはブラウザ内のデモで、実 API・端末とは接続しません。
+2026 年 10 月 18 日時点のソース（`main`、バックエンドの安全対策 `5e456ac` を取り込んだ状態）を基準にしています。ここで「実装」はソースに処理があることを指し、実機での動作確認を意味しません。Web の発表用シミュレーターはブラウザ内のデモで、実 API・端末とは接続しません。
 
 | 部分 | 実装されていること | 未接続・未確認のこと |
 | --- | --- | --- |
 | core | v0.5.1。単信号、早歩き、複数信号の連続走行、比較・集計 | 実測入力・心拍由来の制約は設計案 |
-| Web | 固定デモ、地図での模擬経路作成、2〜5 信号、比較再生、任意 API 読込、結果 JSON 保存 | 実信号同期、GPS 走行、BPM グラフ、全件・地域別 API の画面接続 |
+| Web | 固定デモ、地図での模擬経路作成、2〜5 信号、比較再生（1/2/4/5 倍速）、任意 API 読込、データの出所表示、結果 JSON・時系列 CSV 保存 | 実信号同期、GPS 走行、BPM グラフ、全件・地域別 API の画面接続、公開版から API への実通信（CORS） |
+| 開発ダッシュボード | core / API の動作確認、共有用レポート作成 | 書き込み禁止の API では `GET /api/logs` が 403 になり、API 確認画面で「失敗」と表示される |
 | 発表用シミュレーター | ブラウザ内で共有 core を直接使った B/A/W の連動デモ、入力・判定・スマホ／Watch表示、解説・場面移動 | 端末・振動は画面イメージ。実 API・サーバー・実機との通信なし。READMEにあるテスト・目視確認記録は2026年10月17日（当時の core v0.4.1）の結果で、現行 core v0.5.1 に対する再確認ではない |
-| backend | 信号参照、校正値の GET/POST、走行ログの保存・取得 | 実信号の点灯取得、本番環境での永続保存の確認 |
+| backend | 信号参照（デモ 5 件・全件・地域別）、along-route、校正値の GET/POST、走行ログの保存・取得、セッション案内の中継（PUT/GET）。安全対策：公開デモでの書き込み禁止、入力値の範囲検査、IP ごとの回数制限、案内中継の書き込みトークン・期限、防御ヘッダー | 実信号の点灯取得、本番環境での永続保存。公開中の `https://sp2601.vercel.app` は 2026-10-18 の確認時点で安全対策前の動作（`X-Powered-By: Express` を返し、`GET /api/logs` が 200）で、【要確認】再デプロイ。案内の中継を使うアプリはまだない |
 | iPhone | 歩幅・自然ケイデンス校正、目的地・徒歩経路 UI、位置・歩数によるセッション計測、結果表示・保存、WatchConnectivity、前景テンポ出力のソース | Web/core の信号情報を受け取る経路なし。DEBUG シミュレーター限定の仮想信号ガイダンスあり。今回の確認では Mac の Xcode ビルド・iPhone 実機動作を検証していない |
 | Watch | 目標値・セッション・経路案内の端末間通信、テンポ出力、HealthKit ワークアウト／心拍取得のソース | HealthKit 権限を含む実機取得、長時間・背景動作の保証、iPhone 実機との一連の動作を今回検証していない |
 
@@ -151,6 +160,17 @@ npm start
 ```
 
 既定は `http://localhost:3001`。Web の「API」でこの URL を指定して参考信号や校正値を取得します。Web の結果保存はローカル JSON ダウンロードであり、`POST /api/logs` には自動送信しません。
+
+主な環境変数:
+
+| 変数 | 既定 | 内容 |
+| --- | --- | --- |
+| `PORT` | `3001` | 待ち受けポート |
+| `DEMO_READONLY` | 手元では無効、Vercel では有効 | `1` で書き込み禁止（校正値の保存・ログの読み書き・案内の中継が 403 `READ_ONLY`）。Vercel で解除するときだけ `0` |
+| `CORS_ORIGINS` | なし（全オリジン許可） | カンマ区切りで許可するオリジンを絞る |
+| `RUNWAVE_LOGS_FILE` | `backend/logs.json`（Vercel は `/tmp/logs.json`） | 走行ログの保存先 |
+
+Vercel ではログがインスタンスの入れ替わりで消えます。エンドポイントと応答の形は [バックエンドの README](backend/README.md) を参照してください。
 
 ### 開発ダッシュボード
 
@@ -185,11 +205,28 @@ Mac の Xcode で [Runwave.xcodeproj](frontend/watch-app/Runwave.xcodeproj/) を
 | リポジトリ直下 | `npm test` | core / tools のテスト |
 | リポジトリ直下 | `npm run scenarios` | 固定条件での比較結果 |
 | リポジトリ直下 | `npm run api-check -- http://localhost:3001` | 起動済み API の確認 |
+| `backend` | `npm test` | API・安全対策のテスト（空きポートで起動して検証） |
 | `frontend/web-simulator` | `npm test` / `npm run build` | Web のテスト / 配布用ビルド |
+| `frontend/web-simulator` | `npm run acceptance` | 倍率による結果の一致を確認し、`docs/acceptance/` の証跡を書き換える |
 | `frontend/dev-dashboard` | `npm test` / `npm run build` | ダッシュボードのテスト / 配布用ビルド |
 | `frontend/presentation-simulator` | `npm test` / `npm run build` | 発表用デモのテスト / 配布用ビルド |
 
-バックエンド単体の `npm test` は未整備です。上記は実行手順であり、この README の作成時にアプリ全体のテストや実機試験を実行したことを示すものではありません。
+#### 確認結果（2026-10-18・Windows・Node.js 24）
+
+`5e456ac` を取り込んだ `main` で実行しました。
+
+| 対象 | 結果 |
+| --- | --- |
+| core / tools（`npm test`） | 128 件成功 |
+| backend（`npm test`） | 28 件成功（安全対策 15 件を含む） |
+| Web シミュレーター（`npm test`） | 78 件成功・1 件スキップ（共通ケース `core/cases/core-cases.json` が未作成のため） |
+| 開発ダッシュボード（`npm test`） | 51 件成功 |
+| 発表用シミュレーター（`npm test`） | 35 件成功 |
+| ビルド（Web・ダッシュボード・発表用） | 3 本とも成功 |
+| `npm run scenarios` | 完走 |
+| backend の手動確認 | 通常モード：信号・校正値・ログ・along-route が成功、範囲外の BPM は 400、案内の中継はトークンなしの 2 回目が 403。`DEMO_READONLY=1`：書き込み系と案内の中継が 403、信号・校正値の取得・along-route は成功 |
+
+iPhone / Watch（Swift）のビルドと実機試験はこの確認に含みません。
 
 ## リポジトリ構成
 
@@ -199,9 +236,10 @@ frontend/web-simulator/  地図と比較再生を持つ Web シミュレータ�
 frontend/dev-dashboard/  チーム向け core / API 動作確認画面
 frontend/presentation-simulator/ 人物・判定・端末表示をつなぐブラウザ内発表デモ
 frontend/watch-app/      iPhone / Apple Watch の Xcode プロジェクト
-backend/                 信号・校正値・走行ログの API とデータ
+backend/                 信号・校正値・走行ログ・案内中継の API とデータ、テスト
 tools/                   シナリオ・API 確認を支援するツール
-drafts/                  作業依頼・設計の検討資料
+docs/                    GitHub Pages の公開手順、受け入れ確認の証跡
+.github/workflows/       GitHub Pages への自動デプロイ
 ```
 
 制御の仕様は [core/CONTRACT.md](core/CONTRACT.md)、複数信号は [core/CONTRACT-route.md](core/CONTRACT-route.md)、Web の操作と制約は [frontend/web-simulator/README.md](frontend/web-simulator/README.md) を参照してください。契約には合意待ちの項目も含まれるため、実際の挙動は対応するソースとテストをあわせて確認してください。
