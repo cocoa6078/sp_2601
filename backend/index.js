@@ -24,6 +24,45 @@ function calculateDistanceM(lat1, lon1, lat2, lon2) {
   return R * c; // メートル単位
 }
 
+
+// ---------------------------------------------------------
+// 共通ヘルパー（DATA-02 品質項目 / DATA-04 英語キー）
+// ---------------------------------------------------------
+// 信号1件に品質項目を付ける（既存キーは残す）。値の意味は README 参照。
+function withQuality(signal, phaseBasisNote) {
+  return {
+    ...signal,
+    signalType: "vehicle",          // 車両用信号（歩行者用ではない）
+    phaseBasis: "estimated",        // 位相は仮値
+    phaseBasisNote,
+    positionAccuracyM: null,        // 位置精度は不明
+    fetchedAt: null,                // 元データの取得日時が不明
+    crossingDirection: null         // 横断方向は未確認
+  };
+}
+const PHASE_NOTE_DEMO = "位相は仮値（信号の並び順に15秒ずつずらした値）。実測ではありません。";
+const PHASE_NOTE_ALL = "位相は仮値（phaseS=0 固定）。実測ではありません。";
+
+// along-route の match に載せる品質項目を信号から取り出す
+function pickQuality(signal) {
+  const { signalType, phaseBasis, phaseBasisNote, positionAccuracyM, fetchedAt, crossingDirection } = signal;
+  return { signalType, phaseBasis, phaseBasisNote, positionAccuracyM, fetchedAt, crossingDirection };
+}
+
+// 成功レスポンス: 日本語キーは残し、英語 status:"ok" を追加
+function sendOk(res, body, httpStatus = 200) {
+  return res.status(httpStatus).json({ ...body, status: "ok" });
+}
+// エラーレスポンス: 日本語キー（ステータス/メッセージ）に加え status:"error" と error:{code,message}
+function sendError(res, httpStatus, code, message, jpStatus = "エラー") {
+  return res.status(httpStatus).json({
+    ステータス: jpStatus,
+    メッセージ: message,
+    status: "error",
+    error: { code, message }
+  });
+}
+
 // ---------------------------------------------------------
 // 0. ファイルパスおよびストレージの初期設定
 // ---------------------------------------------------------
@@ -89,7 +128,7 @@ try {
     const lat = preciseCoord ? preciseCoord.lat : signal["緯度"];
     const lon = preciseCoord ? preciseCoord.lon : signal["経度"];
 
-    return {
+    return withQuality({
       signalId: `hokkaido_${signal["地域"]}_${signal["交差点番号"]}`,
       region: signal["地域"],
       lat: lat,
@@ -102,7 +141,7 @@ try {
       crossingM: 15.0,
       isEstimated: true,
       note: "※JARTICビッグデータ抽出分（実測・スクレイピング座標適用）"
-    };
+    }, PHASE_NOTE_ALL);
   });
   console.log(`✅ 全データロード成功: ${allSignalsDataF02.length}件のF-02変換完了`);
 
@@ -144,7 +183,7 @@ try {
       distanceFromStartM = Math.round(accumulatedDistance);
     }
 
-    return {
+    return withQuality({
       signalId: `sapporo_${signal["交差点番号"]}`,
       orderIndex: index + 1,
       lat: lat,
@@ -158,7 +197,7 @@ try {
       crossingM: 15.0,
       isEstimated: true,
       note: "※車両用信号のスプリット由来、黄は5秒固定、位相は仮（15秒ずらし）の推定値です。"
-    };
+    }, PHASE_NOTE_DEMO);
   });
   console.log(`✅ デモ用データ準備完了（実測座標・動的距離計算版）: ${signalsData.length} 件抽出`);
 } catch (error) {
@@ -181,12 +220,12 @@ app.get('/test', (req, res) => {
 
 // [GET] デモ用データ取得
 app.get('/api/signals', (req, res) => {
-  res.status(200).json({ ステータス: "成功", データ: signalsData });
+  sendOk(res, { ステータス: "成功", データ: signalsData });
 });
 
 // [GET] 拡張用：全データ取得
 app.get('/api/signals/all', (req, res) => {
-  res.status(200).json({
+  sendOk(res, {
     ステータス: "成功",
     総件数: allSignalsDataF02.length,
     データ: allSignalsDataF02
@@ -199,9 +238,9 @@ app.get('/api/signals/region/:region', (req, res) => {
   const filtered = allSignalsDataF02.filter(s => s.region === targetRegion);
   
   if (filtered.length === 0) {
-    return res.status(404).json({ ステータス: "エラー", メッセージ: "該当地域のデータがありません" });
+    return sendError(res, 404, "NOT_FOUND", "該当地域のデータがありません");
   }
-  res.status(200).json({ ステータス: "成功", 地域: targetRegion, 件数: filtered.length, データ: filtered });
+  sendOk(res, { ステータス: "成功", 地域: targetRegion, 件数: filtered.length, データ: filtered });
 });
 
 // [POST] キャリブレーションの保存
@@ -211,11 +250,11 @@ app.post('/api/calibration', (req, res) => {
   const targetBpm = 通常BPM !== undefined ? 通常BPM : body.NormalBPM;
   
   if (typeof 歩幅 !== 'number' || 歩幅 <= 0 || typeof targetBpm !== 'number' || targetBpm <= 0) {
-    return res.status(400).json({ ステータス: "エラー", メッセージ: "歩幅と通常BPMは正の数値である必要があります。" });
+    return sendError(res, 400, "INVALID_INPUT", "歩幅と通常BPMは正の数値である必要があります。");
   }
 
   if (walkStrideM !== undefined && (typeof walkStrideM !== 'number' || walkStrideM <= 0)) {
-    return res.status(400).json({ ステータス: "エラー", メッセージ: "早歩きの歩幅は正の数値である必要があります。" });
+    return sendError(res, 400, "INVALID_INPUT", "早歩きの歩幅は正の数値である必要があります。");
   }
 
   userCalibrationData = { 
@@ -224,7 +263,7 @@ app.post('/api/calibration', (req, res) => {
     walkStrideM: walkStrideM !== undefined ? walkStrideM : userCalibrationData.walkStrideM 
   };
 
-  res.status(200).json({
+  sendOk(res, {
     ステータス: "成功",
     データ: userCalibrationData
   });
@@ -232,7 +271,7 @@ app.post('/api/calibration', (req, res) => {
 
 // [GET] キャリブレーションの取得
 app.get('/api/calibration', (req, res) => {
-  res.status(200).json({ ステータス: "成功", データ: userCalibrationData });
+  sendOk(res, { ステータス: "成功", データ: userCalibrationData });
 });
 
 // [POST] 走行ログの保存
@@ -240,12 +279,12 @@ app.post('/api/logs', (req, res) => {
   const logData = req.body ?? {};
   
   if (Object.keys(logData).length === 0) {
-    return res.status(400).json({ ステータス: "エラー", メッセージ: "データが空です" });
+    return sendError(res, 400, "INVALID_INPUT", "データが空です");
   }
 
   const { gait, walkCount, walkTimeS, walkDistanceM } = logData;
   if (gait !== undefined && gait !== "run" && gait !== "walk") {
-    return res.status(400).json({ ステータス: "エラー", メッセージ: "gaitは run または walk である必要があります。" });
+    return sendError(res, 400, "INVALID_INPUT", "gaitは run または walk である必要があります。");
   }
 
   if (
@@ -253,7 +292,7 @@ app.post('/api/logs', (req, res) => {
     (walkTimeS !== undefined && (typeof walkTimeS !== 'number' || walkTimeS < 0)) ||
     (walkDistanceM !== undefined && (typeof walkDistanceM !== 'number' || walkDistanceM < 0))
   ) {
-    return res.status(400).json({ ステータス: "エラー", メッセージ: "早歩き関連の数値は負の値にできません。" });
+    return sendError(res, 400, "INVALID_INPUT", "早歩き関連の数値は負の値にできません。");
   }
 
   const newLog = { 
@@ -270,11 +309,11 @@ app.post('/api/logs', (req, res) => {
     console.error("ログのファイル保存に失敗しました:", error.message);
   }
 
-  res.status(201).json({
+  sendOk(res, {
     ステータス: "成功",
     id: newLog.id,
     総ログ数: runLogs.length
-  });
+  }, 201);
 });
 
 // [GET] 走行ログ単件取得
@@ -283,10 +322,10 @@ app.get('/api/logs/:id', (req, res) => {
   const targetLog = runLogs.find(log => log.id === logId);
 
   if (!targetLog) {
-    return res.status(404).json({ ステータス: "エラー", メッセージ: "指定されたログが見つかりません" });
+    return sendError(res, 404, "NOT_FOUND", "指定されたログが見つかりません");
   }
 
-  res.status(200).json({
+  sendOk(res, {
     ステータス: "成功",
     データ: targetLog
   });
@@ -294,7 +333,7 @@ app.get('/api/logs/:id', (req, res) => {
 
 // [GET] 走行ログ一覧の取得
 app.get('/api/logs', (req, res) => {
-  res.status(200).json({ ステータス: "成功", データ: runLogs });
+  sendOk(res, { ステータス: "成功", データ: runLogs });
 });
 // ---------------------------------------------------------
 // セッション別案内中継データストア (D1 / B1)
@@ -309,16 +348,13 @@ app.put('/api/sessions/:sessionId/guidance', (req, res) => {
   const { configVersion, guidanceSeq, createdAt, expiresAt, guidance, signal } = body;
 
   if (guidanceSeq === undefined || typeof guidanceSeq !== 'number') {
-    return res.status(400).json({ ステータス: "エラー", メッセージ: "guidanceSeq（数値）は必須です。" });
+    return sendError(res, 400, "INVALID_INPUT", "guidanceSeq（数値）は必須です。");
   }
 
   // 古い書き込み・順序逆転の拒否 (guidanceSeq 比較)
   const existing = sessionGuidanceStore.get(sessionId);
   if (existing && existing.guidanceSeq >= guidanceSeq) {
-    return res.status(409).json({
-      ステータス: "競合",
-      メッセージ: `古い更新番号です。(現在: ${existing.guidanceSeq}, 送信: ${guidanceSeq})`
-    });
+    return sendError(res, 409, "CONFLICT", `古い更新番号です。(現在: ${existing.guidanceSeq}, 送信: ${guidanceSeq})`, "競合");
   }
 
   // 小数点ケイデンスを保持したオブジェクト構築
@@ -340,7 +376,7 @@ app.put('/api/sessions/:sessionId/guidance', (req, res) => {
   sessionGuidanceStore.set(sessionId, guidanceData);
 
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
-  res.status(200).json({
+  sendOk(res, {
     ステータス: "成功",
     データ: guidanceData
   });
@@ -354,18 +390,15 @@ app.get('/api/sessions/:sessionId/guidance', (req, res) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
 
   if (!guidanceData) {
-    return res.status(404).json({
-      ステータス: "エラー",
-      メッセージ: `セッション [${sessionId}] の案内データが見つかりません。`
-    });
+    return sendError(res, 404, "NOT_FOUND", `セッション [${sessionId}] の案内データが見つかりません。`);
   }
 
-  res.status(200).json({
+  sendOk(res, {
     ステータス: "成功",
     データ: guidanceData
   });
 });
-function calculatePointToSegmentDistanceM(pLat, pLon, aLat, aLon, bLat, bLon) {
+function projectPointToSegment(pLat, pLon, aLat, aLon, bLat, bLon) {
   const R = 6371e3;
   const toRad = (deg) => (deg * Math.PI) / 180;
 
@@ -390,7 +423,11 @@ function calculatePointToSegmentDistanceM(pLat, pLon, aLat, aLon, bLat, bLon) {
 
   const dLat = projLat - latP;
   const dLon = (projLon - lonP) * Math.cos((latP + projLat) / 2);
-  return R * Math.sqrt(dLat * dLat + dLon * dLon);
+  return { distM: R * Math.sqrt(dLat * dLat + dLon * dLon), t };
+}
+
+function calculatePointToSegmentDistanceM(...args) {
+  return projectPointToSegment(...args).distM;
 }
 
 const alongRouteRateLimits = new Map();
@@ -408,6 +445,7 @@ app.post('/api/signals/along-route', (req, res) => {
   rateRecord.count++;
   if (rateRecord.count > 30) {
     return res.status(429).json({
+      status: "error",
       error: { code: "RATE_LIMITED", message: "Too many requests. Please try again later.", retryable: true }
     });
   }
@@ -418,17 +456,20 @@ app.post('/api/signals/along-route', (req, res) => {
 
   if (!route || route.type !== 'LineString' || !Array.isArray(route.coordinates)) {
     return res.status(400).json({
+      status: "error",
       error: { code: "INVALID_ROUTE_GEOMETRY", message: "GeoJSON LineString format is required.", retryable: false }
     });
   }
   if (route.coordinates.length < 2 || route.coordinates.length > 1000) {
     return res.status(400).json({
+      status: "error",
       error: { code: "INVALID_ROUTE_GEOMETRY", message: "Coordinate points must be between 2 and 1000.", retryable: false }
     });
   }
 
   if (!allSignalsDataF02 || allSignalsDataF02.length === 0) {
     return res.status(503).json({
+      status: "error",
       error: { code: "SIGNAL_DATA_UNAVAILABLE", message: "Signal database is not loaded.", retryable: true }
     });
   }
@@ -436,28 +477,37 @@ app.post('/api/signals/along-route', (req, res) => {
   const matches = [];
   const coords = route.coordinates; // [[lon, lat], ...]
 
+  // 経路始点からの累積距離 (m)
+  const cumulativeM = [0];
+  for (let i = 1; i < coords.length; i++) {
+    cumulativeM.push(cumulativeM[i - 1] + calculateDistanceM(coords[i-1][1], coords[i-1][0], coords[i][1], coords[i][0]));
+  }
+
   for (const signal of allSignalsDataF02) {
     if (typeof signal.lat !== 'number' || typeof signal.lon !== 'number' || Number.isNaN(signal.lat) || Number.isNaN(signal.lon)) {
       continue;
     }
 
-    let isWithinCorridor = false;
+    // 全区間を調べ、最短距離の区間を採用（alongRouteM = 区間始点までの累積 + 区間内の射影位置）
+    let best = null;
     for (let i = 0; i < coords.length - 1; i++) {
       const lonA = coords[i][0], latA = coords[i][1];
       const lonB = coords[i+1][0], latB = coords[i+1][1];
 
-      const distM = calculatePointToSegmentDistanceM(signal.lat, signal.lon, latA, lonA, latB, lonB);
-      if (distM <= corridorM) {
-        isWithinCorridor = true;
-        break;
+      const { distM, t } = projectPointToSegment(signal.lat, signal.lon, latA, lonA, latB, lonB);
+      if (distM <= corridorM && (best === null || distM < best.distM)) {
+        best = { distM, alongM: cumulativeM[i] + t * (cumulativeM[i + 1] - cumulativeM[i]) };
       }
     }
+    const isWithinCorridor = best !== null;
 
     if (isWithinCorridor) {
       matches.push({
         physicalSignalId: signal.signalId,
         lat: signal.lat,
         lon: signal.lon,
+        alongRouteM: Math.round(best.alongM * 10) / 10,
+        offsetM: Math.round(best.distM * 10) / 10,
         timing: {
           cycleS: signal.cycleS,
           greenS: signal.greenS,
@@ -471,13 +521,18 @@ app.post('/api/signals/along-route', (req, res) => {
         matchQuality: "position-only",
         quality: "estimated",
         source: "JARTIC-derived signal split; coordinates from source/scrape",
+        ...pickQuality(signal),
         isEstimated: true,
         note: signal.note || "※車両用信号のスプリット由来の推定値です。"
       });
     }
   }
 
+  matches.sort((m1, m2) => m1.alongRouteM - m2.alongRouteM);
+
   return res.status(200).json({
+    status: "ok",
+    generatedAt: new Date().toISOString(),
     schemaVersion: 1,
     dataVersion: "hokkaido-signals-2026-10",
     coverage: { region: "hokkaido", complete: false },
@@ -494,22 +549,25 @@ app.post('/api/signals/along-route', (req, res) => {
 
 // 404 エラーハンドリング
 app.use((req, res, next) => {
-  res.status(404).json({ ステータス: "エラー", メッセージ: "指定されたエンドポイントは見つかりません" });
+  sendError(res, 404, "NOT_FOUND", "指定されたエンドポイントは見つかりません");
 });
 
 // グローバルエラーハンドリング
 app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
-    return res.status(400).json({ ステータス: "エラー", メッセージ: "無効なJSONフォーマットです" });
+    return sendError(res, 400, "INVALID_INPUT", "無効なJSONフォーマットです");
   }
-  res.status(err.status || 500).json({ ステータス: "エラー", メッセージ: "サーバーエラーが発生しました" });
+  sendError(res, err.status || 500, "INTERNAL_ERROR", "サーバーエラーが発生しました");
 });
 
 // ---------------------------------------------------------
 // 4. サーバー起動
 // ---------------------------------------------------------
 const PORT = process.env.PORT || 3001; 
-app.listen(PORT, () => {
-  console.log(`🚀 RUNWAVE Backend サーバー起動完了 (ポート: ${PORT})`);
-});
+// テストから require されたときは listen しない（Vercel は module.exports の app を使う）
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`🚀 RUNWAVE Backend サーバー起動完了 (ポート: ${PORT})`);
+  });
+}
 module.exports = app;
