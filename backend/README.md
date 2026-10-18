@@ -78,3 +78,30 @@ cd backend && npm test（node:test。app を空きポートで listen して検�
   ]
 }
 ~~~
+
+## 信号データの仕様（core と合意済み）
+
+### 信号色の区間（周期 cycleS、青 g=greenS、黄 y=yellowS）
+青 [0, g)、青点滅 [g, g+y)、赤 [g+y, cycleS)。境界はちょうどの時刻から次の色。yellowS は歩行者の青点滅の長さで、車両の黄ではない。
+
+### phaseS と phaseReference
+phaseS は周期内位置（秒）。基準は phaseReference で決まる。
+- "run-start": 走行開始 t=0 時点の周期内位置。/api/signals（デモ5件）。Web シミュレーターはこの意味で使う。
+- "unix-epoch": UNIX 時刻 0 秒時点の周期内位置。/api/signals/all・/region・along-route。値は今 0 のまま（仮値）。
+- core での換算: phaseS_core = (走行開始UNIX秒 + phaseS_api) mod cycleS （端末時計が正しい前提）
+
+### 品質項目の関係
+- phaseBasis が正本。isEstimated は派生（phaseBasis !== "measured"）。quality は旧項目で phaseBasis と同値。
+- crossingM は横断歩道の長さ（信号までの距離ではない）。今は一律 15m の仮定。
+- positionAccuracyM が null は不明。
+- generatedAt は応答生成時刻、fetchedAt は元データの取得日時（不明なら null）。
+
+### along-route の結果の読み方
+- matches が空配列でもエラーではなく、範囲内に収録信号がないという意味。
+- coverage.complete:false は、未収録の信号があり得ることを示す。
+
+### クライアントの取得方針
+- 取得するのは走行開始時と経路変更時。
+- retryable:true のときだけ 2→4→8秒の間隔で最大3回再試行する。
+- 429 は60秒待つ。
+- 失敗時は信号案内なしで続行する。

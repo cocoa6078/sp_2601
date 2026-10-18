@@ -177,3 +177,25 @@ test('along-route: alongRouteM 昇順・単調増加・offsetM<=corridorM・gene
   // 逆順にしたので、デモ最終点が先頭になる
   assert.strictEqual(body.matches[0].physicalSignalId, demo[demo.length - 1].signalId.replace('sapporo_', 'hokkaido_札幌方面_'));
 });
+
+test('phaseReference と phaseBasis/isEstimated/quality が全エンドポイントで矛盾しない', async () => {
+  const demo = (await getJson('/api/signals')).body.データ;
+  const all = (await getJson('/api/signals/all')).body.データ;
+  const region = (await getJson('/api/signals/region/' + encodeURIComponent('札幌方面'))).body.データ;
+  const along = (await postJson('/api/signals/along-route', {
+    route: { type: 'LineString', coordinates: demo.map((s) => [s.lon, s.lat]) }
+  })).body.matches;
+
+  const check = (list, ref) => {
+    assert.ok(list.length > 0);
+    for (const s of list) {
+      assert.strictEqual(s.phaseReference, ref);
+      assert.strictEqual(s.isEstimated, s.phaseBasis !== 'measured');
+    }
+  };
+  check(demo, 'run-start');
+  check(all, 'unix-epoch');
+  check(region, 'unix-epoch');
+  check(along, 'unix-epoch');
+  for (const m of along) assert.strictEqual(m.quality, m.phaseBasis);
+});

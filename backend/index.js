@@ -29,11 +29,15 @@ function calculateDistanceM(lat1, lon1, lat2, lon2) {
 // 共通ヘルパー（DATA-02 品質項目 / DATA-04 英語キー）
 // ---------------------------------------------------------
 // 信号1件に品質項目を付ける（既存キーは残す）。値の意味は README 参照。
-function withQuality(signal, phaseBasisNote) {
+function withQuality(signal, phaseBasisNote, phaseReference) {
+  const phaseBasis = "estimated"; // 正本。isEstimated は派生
+
   return {
     ...signal,
     signalType: "vehicle",          // 車両用信号（歩行者用ではない）
-    phaseBasis: "estimated",        // 位相は仮値
+    phaseBasis,                     // 位相は仮値（正本）
+    phaseReference,                 // phaseS の基準: run-start | unix-epoch
+    isEstimated: phaseBasis !== "measured", // 派生
     phaseBasisNote,
     positionAccuracyM: null,        // 位置精度は不明
     fetchedAt: null,                // 元データの取得日時が不明
@@ -45,8 +49,8 @@ const PHASE_NOTE_ALL = "位相は仮値（phaseS=0 固定）。実測ではあ�
 
 // along-route の match に載せる品質項目を信号から取り出す
 function pickQuality(signal) {
-  const { signalType, phaseBasis, phaseBasisNote, positionAccuracyM, fetchedAt, crossingDirection } = signal;
-  return { signalType, phaseBasis, phaseBasisNote, positionAccuracyM, fetchedAt, crossingDirection };
+  const { signalType, phaseBasis, phaseReference, phaseBasisNote, positionAccuracyM, fetchedAt, crossingDirection } = signal;
+  return { signalType, phaseBasis, phaseReference, phaseBasisNote, positionAccuracyM, fetchedAt, crossingDirection };
 }
 
 // 成功レスポンス: 日本語キーは残し、英語 status:"ok" を追加
@@ -141,7 +145,7 @@ try {
       crossingM: 15.0,
       isEstimated: true,
       note: "※JARTICビッグデータ抽出分（実測・スクレイピング座標適用）"
-    }, PHASE_NOTE_ALL);
+    }, PHASE_NOTE_ALL, "unix-epoch");
   });
   console.log(`✅ 全データロード成功: ${allSignalsDataF02.length}件のF-02変換完了`);
 
@@ -197,7 +201,7 @@ try {
       crossingM: 15.0,
       isEstimated: true,
       note: "※車両用信号のスプリット由来、黄は5秒固定、位相は仮（15秒ずらし）の推定値です。"
-    }, PHASE_NOTE_DEMO);
+    }, PHASE_NOTE_DEMO, "run-start");
   });
   console.log(`✅ デモ用データ準備完了（実測座標・動的距離計算版）: ${signalsData.length} 件抽出`);
 } catch (error) {
@@ -519,10 +523,10 @@ app.post('/api/signals/along-route', (req, res) => {
         headingDeg: null,
         approachDirection: null,
         matchQuality: "position-only",
-        quality: "estimated",
+        quality: signal.phaseBasis, // 旧項目。phaseBasis と同値
         source: "JARTIC-derived signal split; coordinates from source/scrape",
         ...pickQuality(signal),
-        isEstimated: true,
+        isEstimated: signal.isEstimated,
         note: signal.note || "※車両用信号のスプリット由来の推定値です。"
       });
     }
