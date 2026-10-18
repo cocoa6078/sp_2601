@@ -1,0 +1,1158 @@
+{
+  "item": "web-speed-consistency",
+  "description": "x1/x2/x4 で同じ模擬時刻の位置・時刻・信号位相・BPM が一致するか（デモ B/W）。模擬経路・模擬信号によるシミュレーション",
+  "ok": true,
+  "executedAt": "2026-10-18T02:34:34.382Z",
+  "git": {
+    "sha": "3ced56ba4ecbd5fde89ca8524aad3a358fa6d855",
+    "dirty": false
+  },
+  "coreVersion": "0.4.1",
+  "node": "v24.15.0",
+  "results": [
+    {
+      "demo": "B",
+      "baseline": "x1",
+      "wallStepS": 0.1,
+      "compareEveryTicks": 4,
+      "speeds": [
+        {
+          "speed": 1,
+          "ok": true,
+          "comparedTicks": 901,
+          "mismatchCount": 0,
+          "mismatches": [],
+          "finalTick": 3600,
+          "finalMatchesX1": true,
+          "eventCount": 2,
+          "samples": [
+            {
+              "tick": 0,
+              "timeS": 0,
+              "lanes": {
+                "normal": {
+                  "x": 0,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 20,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 0,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 20,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 516,
+              "timeS": 51.6,
+              "lanes": {
+                "normal": {
+                  "x": 103.20000000000093,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "green",
+                  "signalRemainingS": 18.4,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 109.84533333333263,
+                  "bpm": 164,
+                  "targetBpm": 164,
+                  "signalColor": "green",
+                  "signalRemainingS": 18.4,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 1028,
+              "timeS": 102.8,
+              "lanes": {
+                "normal": {
+                  "x": 205.59999999999687,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 37.2,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 221.3919999999991,
+                  "bpm": 163,
+                  "targetBpm": 163,
+                  "signalColor": "red",
+                  "signalRemainingS": 37.2,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 1544,
+              "timeS": 154.4,
+              "lanes": {
+                "normal": {
+                  "x": 308.79999999999103,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "green",
+                  "signalRemainingS": 35.6,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 333.5359999999968,
+                  "bpm": 163,
+                  "targetBpm": 163,
+                  "signalColor": "green",
+                  "signalRemainingS": 35.6,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 2056,
+              "timeS": 205.6,
+              "lanes": {
+                "normal": {
+                  "x": 400,
+                  "bpm": 0,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 54.4,
+                  "waiting": true
+                },
+                "runwave": {
+                  "x": 442.9546666666624,
+                  "bpm": 151,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 54.4,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 2572,
+              "timeS": 257.2,
+              "lanes": {
+                "normal": {
+                  "x": 400,
+                  "bpm": 0,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 2.8,
+                  "waiting": true
+                },
+                "runwave": {
+                  "x": 546.1866666666659,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 2.8,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 3084,
+              "timeS": 308.4,
+              "lanes": {
+                "normal": {
+                  "x": 496.79999999999455,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "green",
+                  "signalRemainingS": 1.6,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 600,
+                  "bpm": 0,
+                  "targetBpm": 150,
+                  "signalColor": "green",
+                  "signalRemainingS": 1.6,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 3600,
+              "timeS": 360,
+              "lanes": {
+                "normal": {
+                  "x": 600,
+                  "bpm": 0,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 20,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 600,
+                  "bpm": 0,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 20,
+                  "waiting": false
+                }
+              }
+            }
+          ]
+        },
+        {
+          "speed": 2,
+          "ok": true,
+          "comparedTicks": 901,
+          "mismatchCount": 0,
+          "mismatches": [],
+          "finalTick": 3600,
+          "finalMatchesX1": true,
+          "eventCount": 2,
+          "samples": [
+            {
+              "tick": 0,
+              "timeS": 0,
+              "lanes": {
+                "normal": {
+                  "x": 0,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 20,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 0,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 20,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 516,
+              "timeS": 51.6,
+              "lanes": {
+                "normal": {
+                  "x": 103.20000000000093,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "green",
+                  "signalRemainingS": 18.4,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 109.84533333333263,
+                  "bpm": 164,
+                  "targetBpm": 164,
+                  "signalColor": "green",
+                  "signalRemainingS": 18.4,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 1028,
+              "timeS": 102.8,
+              "lanes": {
+                "normal": {
+                  "x": 205.59999999999687,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 37.2,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 221.3919999999991,
+                  "bpm": 163,
+                  "targetBpm": 163,
+                  "signalColor": "red",
+                  "signalRemainingS": 37.2,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 1544,
+              "timeS": 154.4,
+              "lanes": {
+                "normal": {
+                  "x": 308.79999999999103,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "green",
+                  "signalRemainingS": 35.6,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 333.5359999999968,
+                  "bpm": 163,
+                  "targetBpm": 163,
+                  "signalColor": "green",
+                  "signalRemainingS": 35.6,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 2056,
+              "timeS": 205.6,
+              "lanes": {
+                "normal": {
+                  "x": 400,
+                  "bpm": 0,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 54.4,
+                  "waiting": true
+                },
+                "runwave": {
+                  "x": 442.9546666666624,
+                  "bpm": 151,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 54.4,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 2572,
+              "timeS": 257.2,
+              "lanes": {
+                "normal": {
+                  "x": 400,
+                  "bpm": 0,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 2.8,
+                  "waiting": true
+                },
+                "runwave": {
+                  "x": 546.1866666666659,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 2.8,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 3084,
+              "timeS": 308.4,
+              "lanes": {
+                "normal": {
+                  "x": 496.79999999999455,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "green",
+                  "signalRemainingS": 1.6,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 600,
+                  "bpm": 0,
+                  "targetBpm": 150,
+                  "signalColor": "green",
+                  "signalRemainingS": 1.6,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 3600,
+              "timeS": 360,
+              "lanes": {
+                "normal": {
+                  "x": 600,
+                  "bpm": 0,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 20,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 600,
+                  "bpm": 0,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 20,
+                  "waiting": false
+                }
+              }
+            }
+          ]
+        },
+        {
+          "speed": 4,
+          "ok": true,
+          "comparedTicks": 901,
+          "mismatchCount": 0,
+          "mismatches": [],
+          "finalTick": 3600,
+          "finalMatchesX1": true,
+          "eventCount": 2,
+          "samples": [
+            {
+              "tick": 0,
+              "timeS": 0,
+              "lanes": {
+                "normal": {
+                  "x": 0,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 20,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 0,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 20,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 516,
+              "timeS": 51.6,
+              "lanes": {
+                "normal": {
+                  "x": 103.20000000000093,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "green",
+                  "signalRemainingS": 18.4,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 109.84533333333263,
+                  "bpm": 164,
+                  "targetBpm": 164,
+                  "signalColor": "green",
+                  "signalRemainingS": 18.4,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 1028,
+              "timeS": 102.8,
+              "lanes": {
+                "normal": {
+                  "x": 205.59999999999687,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 37.2,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 221.3919999999991,
+                  "bpm": 163,
+                  "targetBpm": 163,
+                  "signalColor": "red",
+                  "signalRemainingS": 37.2,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 1544,
+              "timeS": 154.4,
+              "lanes": {
+                "normal": {
+                  "x": 308.79999999999103,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "green",
+                  "signalRemainingS": 35.6,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 333.5359999999968,
+                  "bpm": 163,
+                  "targetBpm": 163,
+                  "signalColor": "green",
+                  "signalRemainingS": 35.6,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 2056,
+              "timeS": 205.6,
+              "lanes": {
+                "normal": {
+                  "x": 400,
+                  "bpm": 0,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 54.4,
+                  "waiting": true
+                },
+                "runwave": {
+                  "x": 442.9546666666624,
+                  "bpm": 151,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 54.4,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 2572,
+              "timeS": 257.2,
+              "lanes": {
+                "normal": {
+                  "x": 400,
+                  "bpm": 0,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 2.8,
+                  "waiting": true
+                },
+                "runwave": {
+                  "x": 546.1866666666659,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 2.8,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 3084,
+              "timeS": 308.4,
+              "lanes": {
+                "normal": {
+                  "x": 496.79999999999455,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "green",
+                  "signalRemainingS": 1.6,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 600,
+                  "bpm": 0,
+                  "targetBpm": 150,
+                  "signalColor": "green",
+                  "signalRemainingS": 1.6,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 3600,
+              "timeS": 360,
+              "lanes": {
+                "normal": {
+                  "x": 600,
+                  "bpm": 0,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 20,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 600,
+                  "bpm": 0,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 20,
+                  "waiting": false
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "demo": "W",
+      "baseline": "x1",
+      "wallStepS": 0.1,
+      "compareEveryTicks": 4,
+      "speeds": [
+        {
+          "speed": 1,
+          "ok": true,
+          "comparedTicks": 853,
+          "mismatchCount": 0,
+          "mismatches": [],
+          "finalTick": 3408,
+          "finalMatchesX1": true,
+          "eventCount": 2,
+          "samples": [
+            {
+              "tick": 0,
+              "timeS": 0,
+              "lanes": {
+                "normal": {
+                  "x": 0,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "green",
+                  "signalRemainingS": 45,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 0,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "green",
+                  "signalRemainingS": 45,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 488,
+              "timeS": 48.8,
+              "lanes": {
+                "normal": {
+                  "x": 97.60000000000085,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "flashing",
+                  "signalRemainingS": 1.2,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 90.45333333333325,
+                  "bpm": 130,
+                  "targetBpm": 130,
+                  "signalColor": "flashing",
+                  "signalRemainingS": 1.2,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 972,
+              "timeS": 97.2,
+              "lanes": {
+                "normal": {
+                  "x": 194.3999999999975,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 17.8,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 174.34666666666973,
+                  "bpm": 130,
+                  "targetBpm": 130,
+                  "signalColor": "red",
+                  "signalRemainingS": 17.8,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 1460,
+              "timeS": 146,
+              "lanes": {
+                "normal": {
+                  "x": 291.999999999992,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "green",
+                  "signalRemainingS": 19,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 258.93333333334266,
+                  "bpm": 130,
+                  "targetBpm": 130,
+                  "signalColor": "green",
+                  "signalRemainingS": 19,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 1948,
+              "timeS": 194.8,
+              "lanes": {
+                "normal": {
+                  "x": 389.59999999998644,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 40.2,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 336.26111111112806,
+                  "bpm": 117.777778,
+                  "targetBpm": 117.777778,
+                  "signalColor": "red",
+                  "signalRemainingS": 40.2,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 2436,
+              "timeS": 243.6,
+              "lanes": {
+                "normal": {
+                  "x": 417.199999999999,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "green",
+                  "signalRemainingS": 41.4,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 408.10555555558113,
+                  "bpm": 117.777778,
+                  "targetBpm": 117.777778,
+                  "signalColor": "green",
+                  "signalRemainingS": 41.4,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 2920,
+              "timeS": 292,
+              "lanes": {
+                "normal": {
+                  "x": 513.9999999999941,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 63,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 502.43396226418184,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 63,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 3408,
+              "timeS": 340.8,
+              "lanes": {
+                "normal": {
+                  "x": 600,
+                  "bpm": 0,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 14.2,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 600,
+                  "bpm": 0,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 14.2,
+                  "waiting": false
+                }
+              }
+            }
+          ]
+        },
+        {
+          "speed": 2,
+          "ok": true,
+          "comparedTicks": 853,
+          "mismatchCount": 0,
+          "mismatches": [],
+          "finalTick": 3408,
+          "finalMatchesX1": true,
+          "eventCount": 2,
+          "samples": [
+            {
+              "tick": 0,
+              "timeS": 0,
+              "lanes": {
+                "normal": {
+                  "x": 0,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "green",
+                  "signalRemainingS": 45,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 0,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "green",
+                  "signalRemainingS": 45,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 488,
+              "timeS": 48.8,
+              "lanes": {
+                "normal": {
+                  "x": 97.60000000000085,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "flashing",
+                  "signalRemainingS": 1.2,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 90.45333333333325,
+                  "bpm": 130,
+                  "targetBpm": 130,
+                  "signalColor": "flashing",
+                  "signalRemainingS": 1.2,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 972,
+              "timeS": 97.2,
+              "lanes": {
+                "normal": {
+                  "x": 194.3999999999975,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 17.8,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 174.34666666666973,
+                  "bpm": 130,
+                  "targetBpm": 130,
+                  "signalColor": "red",
+                  "signalRemainingS": 17.8,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 1460,
+              "timeS": 146,
+              "lanes": {
+                "normal": {
+                  "x": 291.999999999992,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "green",
+                  "signalRemainingS": 19,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 258.93333333334266,
+                  "bpm": 130,
+                  "targetBpm": 130,
+                  "signalColor": "green",
+                  "signalRemainingS": 19,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 1948,
+              "timeS": 194.8,
+              "lanes": {
+                "normal": {
+                  "x": 389.59999999998644,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 40.2,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 336.26111111112806,
+                  "bpm": 117.777778,
+                  "targetBpm": 117.777778,
+                  "signalColor": "red",
+                  "signalRemainingS": 40.2,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 2436,
+              "timeS": 243.6,
+              "lanes": {
+                "normal": {
+                  "x": 417.199999999999,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "green",
+                  "signalRemainingS": 41.4,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 408.10555555558113,
+                  "bpm": 117.777778,
+                  "targetBpm": 117.777778,
+                  "signalColor": "green",
+                  "signalRemainingS": 41.4,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 2920,
+              "timeS": 292,
+              "lanes": {
+                "normal": {
+                  "x": 513.9999999999941,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 63,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 502.43396226418184,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 63,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 3408,
+              "timeS": 340.8,
+              "lanes": {
+                "normal": {
+                  "x": 600,
+                  "bpm": 0,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 14.2,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 600,
+                  "bpm": 0,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 14.2,
+                  "waiting": false
+                }
+              }
+            }
+          ]
+        },
+        {
+          "speed": 4,
+          "ok": true,
+          "comparedTicks": 853,
+          "mismatchCount": 0,
+          "mismatches": [],
+          "finalTick": 3408,
+          "finalMatchesX1": true,
+          "eventCount": 2,
+          "samples": [
+            {
+              "tick": 0,
+              "timeS": 0,
+              "lanes": {
+                "normal": {
+                  "x": 0,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "green",
+                  "signalRemainingS": 45,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 0,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "green",
+                  "signalRemainingS": 45,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 488,
+              "timeS": 48.8,
+              "lanes": {
+                "normal": {
+                  "x": 97.60000000000085,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "flashing",
+                  "signalRemainingS": 1.2,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 90.45333333333325,
+                  "bpm": 130,
+                  "targetBpm": 130,
+                  "signalColor": "flashing",
+                  "signalRemainingS": 1.2,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 972,
+              "timeS": 97.2,
+              "lanes": {
+                "normal": {
+                  "x": 194.3999999999975,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 17.8,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 174.34666666666973,
+                  "bpm": 130,
+                  "targetBpm": 130,
+                  "signalColor": "red",
+                  "signalRemainingS": 17.8,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 1460,
+              "timeS": 146,
+              "lanes": {
+                "normal": {
+                  "x": 291.999999999992,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "green",
+                  "signalRemainingS": 19,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 258.93333333334266,
+                  "bpm": 130,
+                  "targetBpm": 130,
+                  "signalColor": "green",
+                  "signalRemainingS": 19,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 1948,
+              "timeS": 194.8,
+              "lanes": {
+                "normal": {
+                  "x": 389.59999999998644,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 40.2,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 336.26111111112806,
+                  "bpm": 117.777778,
+                  "targetBpm": 117.777778,
+                  "signalColor": "red",
+                  "signalRemainingS": 40.2,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 2436,
+              "timeS": 243.6,
+              "lanes": {
+                "normal": {
+                  "x": 417.199999999999,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "green",
+                  "signalRemainingS": 41.4,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 408.10555555558113,
+                  "bpm": 117.777778,
+                  "targetBpm": 117.777778,
+                  "signalColor": "green",
+                  "signalRemainingS": 41.4,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 2920,
+              "timeS": 292,
+              "lanes": {
+                "normal": {
+                  "x": 513.9999999999941,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 63,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 502.43396226418184,
+                  "bpm": 150,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 63,
+                  "waiting": false
+                }
+              }
+            },
+            {
+              "tick": 3408,
+              "timeS": 340.8,
+              "lanes": {
+                "normal": {
+                  "x": 600,
+                  "bpm": 0,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 14.2,
+                  "waiting": false
+                },
+                "runwave": {
+                  "x": 600,
+                  "bpm": 0,
+                  "targetBpm": 150,
+                  "signalColor": "red",
+                  "signalRemainingS": 14.2,
+                  "waiting": false
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
