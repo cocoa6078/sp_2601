@@ -34,7 +34,7 @@ B → A → W を自動で続けて再生（再生ボタンで開始）。倍率
 ## 構成
 
 `src/` simulation（core・時計・セッション・場面ジャンプ）／demo-view-model（全表示の値を同じ state から 1 回で生成）／world-view／flow-view／phone-view／watch-view／explanation-controller／scenarios（B=SCENARIOS.B, A=SCENARIOS.A, W=SCENARIOS_WALK.W。enabled=true・point・早歩き有効・終了前余裕 5 秒を明示）／main／styles。
-core は `../../core/` を参照（コピーしない・変更しない）。使用 core 版: 0.4.1。
+core は `src/core-ns.js` からリポジトリ共通の `../../../core/` を直接参照します（コピーせず、ここでは変更しません）。現在の `core/runwave-core.js` の版は **0.5.1** です。
 
 ## 収録手順
 
@@ -43,7 +43,7 @@ core は `../../core/` を参照（コピーしない・変更しない）。使
 
 ## 確認結果（2026-10-17・実装者環境）
 
-- `npm test` 24 件成功／`npm run build` 成功。Chrome 系（Browser pane）で B・W の描画と解説モードを目視確認。
+- 当時の共通 core v0.4.1 を参照した状態で `npm test` 24 件成功／`npm run build` 成功。Chrome 系（Browser pane）で B・W の描画と解説モードを目視確認。core はその後更新され、現在は v0.5.1 です。この記録は 2026-10-17 時点の結果であり、現行 core に対する再確認結果ではありません。
 - 見せ場の tick: B adjust@1、A adjust@1、W prep@1・walk@1671。
 - 未確認: Mac の収録対象ブラウザ、1 倍速での実時間全編、実機との見た目差。
 - 【要確認】早歩き時の歩幅表示は runner.walkStrideM 未指定なら 0.75 m（core の既定と同値のはずだが core 内部定数のため複製）。
