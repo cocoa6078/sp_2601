@@ -6,6 +6,7 @@
     "test": "node --test \"core/*.test.js\" \"tools/*.test.js\"",
     "scenarios": "node core/run-scenarios.js",
     "api-check": "node tools/api-check.js",
-    "mock-api": "node tools/mock-server.js"
+    "mock-api": "node tools/mock-server.js",
+    "figures": "node tools/readme-figures.js"
   }
 }
