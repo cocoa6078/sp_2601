@@ -2,7 +2,9 @@
 // 単位: 時間=秒(s)、距離=m、BPM=歩/分（1拍=1歩。心拍数ではない）
 // 契約の詳細は core/CONTRACT.md（作業票 v4 準拠）
 
-export const CORE_VERSION = '0.4.1';
+import { runLowBpm, isEstimatedSignal } from './signal-input.js';
+
+export const CORE_VERSION = '0.5.0';
 export const DT = 0.1;          // 固定刻み（秒）。可変 dt には対応しない
 const TPS = 10;                 // ticks per second（t = tick / TPS で浮動小数誤差を避ける）
 
@@ -17,7 +19,8 @@ export const CROSSING_MODELS = ['point', 'length'];
 // none: 調整不要 / signal: 信号に合わせて調整中 / noMargin: 余裕付きの計画は無いが通常BPMで青に着く見込み
 // walkBridge: 走りでは間に合わないので早歩きでつなぐ（切り替える前の「走り続ける」段階も含む）
 // unavoidable: どの候補でも青に着けない（停止推奨）/ off: 制御OFF（常に）/ waiting: 横断地点で信号待ち / passed: 横断地点を通過済み
-export const REASONS = ['none', 'signal', 'noMargin', 'walkBridge', 'unavoidable', 'off', 'waiting', 'passed'];
+// uncertain: 推定の信号データなので加速の提案を出さず、通常BPMのまま（要件 v2 SAFE-03。減速・早歩きは出す）
+export const REASONS = ['none', 'signal', 'noMargin', 'walkBridge', 'unavoidable', 'off', 'waiting', 'passed', 'uncertain'];
 // 歩き方（state.gait）: 'run' / 'walk'（早歩きが有効なときだけ state に出る）
 
 export const DEFAULT_CONTROL = {
@@ -83,7 +86,7 @@ export function validateConfig(config) {
   // （既定のままだと、走りの下限が 5.8km/h 以下のゆっくり走る人で RangeError になっていた。改善ループ c10a）
   const walkGiven = config.control?.walk ?? {};
   const walkSpeedGiven = walkGiven.maxKmh !== undefined || walkGiven.minKmh !== undefined;
-  need(!walkSpeedGiven || w.maxKmh < speedOf(r.strideM, r.baseBpm - c.maxDeltaBpm) * 3.6, 'control.walk.maxKmh は走りの下限の速さより遅くする');
+  need(!walkSpeedGiven || w.maxKmh < speedOf(r.strideM, runLowBpm(r.baseBpm, c.maxDeltaBpm)) * 3.6, 'control.walk.maxKmh は走りの下限の速さより遅くする');
   need(r.walkStrideM === undefined || isPos(r.walkStrideM), 'runner.walkStrideM は正の数');
   // 早歩きでは point モデルでも横断長ぶん歩いて渡るので、ゴールは横断の先に置く
   need(!w.enabled || route.goalX > route.crossingX + s.crossingM, '早歩きを使うときは goalX を crossingX + 横断長 より先にする');
@@ -98,7 +101,7 @@ function controlOf(config) {
   // 走りの下限の速さ以上の早歩きは意味が無い（走ったほうが遅い）。早歩きの速さを走りの下限より遅い範囲に切り詰め、
   // 範囲が残らなければ早歩きを使わない（改善ループ c10a：ゆっくり走る人で既定の早歩きが RangeError になっていた）
   if (walk.enabled) {
-    const runLowKmh = speedOf(config.runner.strideM, base - c.maxDeltaBpm) * 3.6;
+    const runLowKmh = speedOf(config.runner.strideM, runLowBpm(base, c.maxDeltaBpm)) * 3.6;
     if (walk.maxKmh >= runLowKmh) {
       const n = Math.floor((runLowKmh - walk.minKmh) / walk.stepKmh - 1e-9);
       if (n < 0) walk.enabled = false;
@@ -108,7 +111,7 @@ function controlOf(config) {
   return {
     ...c,
     walk,
-    baseLow: base - c.maxDeltaBpm, baseHigh: base + c.maxDeltaBpm,
+    baseLow: runLowBpm(base, c.maxDeltaBpm), baseHigh: base + c.maxDeltaBpm,
     intervalTicks: Math.round(c.stepIntervalS * TPS),
     targetTicks: Math.round(c.targetIntervalS * TPS),
   };
@@ -402,6 +405,8 @@ function chooseTargetIn(state, config, win) {
     if (state.targetBpm !== chosen && Math.abs(state.targetBpm - base) === Math.abs(chosen - base) && usable(state.targetBpm)) {
       chosen = state.targetBpm;
     }
+    // 推定の信号データでは加速の提案を出さない（位相が外れていると青の終わりに飛び込むことになるため。要件 v2 SAFE-03）
+    if (chosen > base && isEstimatedSignal(signal)) return { targetBpm: base, mode: modeFor(base), reason: 'uncertain' };
     return { targetBpm: chosen, mode: modeFor(chosen), reason: chosen === base ? 'none' : 'signal' };
   }
   // 余裕付きの計画は無い。通常BPMで青に着けるなら通常どおり（余裕なし）、着けなければ停止推奨

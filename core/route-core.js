@@ -2,6 +2,7 @@
 // 1信号の core（runwave-core.js）の step をそのまま使い、信号を渡り終えたら「今の信号」と「横断地点の位置」だけを
 // 次の信号に差し替える。時刻・位置・BPM・歩き方・集計は交差点ごとに初期化しない。契約は core/CONTRACT-route.md
 import { CORE_VERSION, DT, DEFAULT_CONTROL, createRun, step, summarize, signalAt, speedOf, safeGreenWindows, validateConfig } from './runwave-core.js';
+import { runLowBpm, isEstimatedSignal } from './signal-input.js';
 
 export const ROUTE_VERSION = '0.2.0';
 export const EVENT_TYPES = ['arrive', 'waitStart', 'waitEnd', 'crossStart', 'crossEnd'];
@@ -17,7 +18,10 @@ function need(cond, msg) {
 function legConfig(config, i) {
   const s = config.signals[Math.min(i, config.signals.length - 1)];
   // lastLeg：最後の信号（その先に信号が無い）か。止まるのが避けられないとき早歩きで近づくのは最後の信号だけ（改善ループ c08b）
-  return { runner: config.runner, control: config.control, signal: s.signal, route: { crossingX: s.atM, goalX: config.goalM, lastLeg: i >= config.signals.length - 1 } };
+  // meta の推定フラグ（isEstimated・phaseBasis）は信号にも載せる（推定データでは加速しない。要件 v2 SAFE-03）
+  const estimated = isEstimatedSignal(s.meta);
+  const signal = estimated && s.signal.isEstimated !== true ? { ...s.signal, isEstimated: true } : s.signal;
+  return { runner: config.runner, control: config.control, signal, route: { crossingX: s.atM, goalX: config.goalM, lastLeg: i >= config.signals.length - 1 } };
 }
 
 export function validateRouteConfig(config) {
@@ -58,6 +62,7 @@ export function createRouteRun(config) {
 // ①停止回数 ②余裕なしで通る回数 ③停止時間 が最も少なくなる到着時刻を探す（同じなら通常BPMで着く時刻に近いもの）
 const SAMPLE_S = 0.5;
 const EDGE_SLICE_S = 2;   // 青の時間帯の端に着く候補の幅（秒）
+const MID_SLICE_S = 4;    // 青の時間帯の途中に着く候補を置く間隔（秒）
 const LOOKAHEAD_SIGNALS = 2;   // 先読みの試走で見る、今の信号より先の信号の数
 const ESTIMATE_SIGNALS = 4;    // 先読みの見積もりで見る、今の信号より先の信号の数（計算の上限）
 const better = (a, b) => {
@@ -74,7 +79,8 @@ function speedsOf(config) {
     vWalkFast: walk.maxKmh / 3.6,
     vBase: speedOf(strideM, baseBpm),
     vFast: speedOf(strideM, baseBpm + c.maxDeltaBpm),
-    vRunSlow: speedOf(strideM, baseBpm - c.maxDeltaBpm),
+    runLow: runLowBpm(baseBpm, c.maxDeltaBpm),
+    vRunSlow: speedOf(strideM, runLowBpm(baseBpm, c.maxDeltaBpm)),
     vWalkSlow: walk.minKmh / 3.6,
   };
 }
@@ -95,8 +101,10 @@ function rampTime(sp, d, b0, bT) {
 // 時刻 [tLo, tHi] に位置 fromX を BPM b0 で出たとき、信号 sig で「止まらずに通れる」到着時刻の区間（走り・早歩き・余裕なし）
 function passIntervals(sig, sp, fromX, tLo, tHi, b0 = sp.baseBpm) {
   const d = sig.atM - fromX;
-  const aFast = tLo + rampTime(sp, d, b0, sp.baseBpm + sp.c.maxDeltaBpm);
-  const aRunSlow = tHi + rampTime(sp, d, b0, sp.baseBpm - sp.c.maxDeltaBpm);
+  // 推定の信号データでは加速しない（runwave-core と同じ。要件 v2 SAFE-03）ので、最も早い到着も通常BPMで見積もる
+  const fastBpm = isEstimatedSignal(sig.meta) || isEstimatedSignal(sig.signal) ? sp.baseBpm : sp.baseBpm + sp.c.maxDeltaBpm;
+  const aFast = tLo + rampTime(sp, d, b0, fastBpm);
+  const aRunSlow = tHi + rampTime(sp, d, b0, sp.runLow);
   const aSlow = sp.walk.enabled ? tHi + d / sp.vWalkSlow : aRunSlow;
   const len = sp.c.crossingModel === 'length' ? sig.signal.crossingM : 0;
   const m = { startMarginS: sp.c.startMarginS, endMarginS: sp.c.endMarginS };
@@ -142,7 +150,7 @@ function planArriveWindow(state, config) {
   if (!sp.c.enabled || i >= config.signals.length - 1 || state.phase !== 'approach') return null;
   const sig = config.signals[i];
   const now = state.t;
-  const { out } = passIntervals(sig, sp, state.x, now, now, state.gait === 'walk' ? sp.baseBpm - sp.c.maxDeltaBpm : state.bpm);
+  const { out } = passIntervals(sig, sp, state.x, now, now, state.gait === 'walk' ? sp.runLow : state.bpm);
   const endX = sig.atM + sig.signal.crossingM;
   const baseArrive = now + (sig.atM - state.x) / sp.vBase;
   // 到着時刻を SAMPLE_S ごとに試し、それぞれの先の見積もりを出す
@@ -254,10 +262,15 @@ function chooseLegWindow(state, config) {
     addWindow(est.sampleWindow);
     addWindow({ startT: est.startT, endT: est.endT });
   }
-  const { out } = passIntervals(sig, sp, state.x, state.t, state.t, state.gait === 'walk' ? sp.baseBpm - sp.c.maxDeltaBpm : state.bpm);
+  const { out } = passIntervals(sig, sp, state.x, state.t, state.t, state.gait === 'walk' ? sp.runLow : state.bpm);
   for (const w of out) {
     if (w.kind === 'noMargin') continue;
     addWindow({ startT: round6(w.lo), endT: round6(w.hi) });
+    // 時間帯の途中にも MID_SLICE_S ごとに着く候補を置く。端と通常BPMに近い所だけでは、先の信号に合う到着を取りこぼし、
+    // 早歩きで遅らせて合わせていた（改善ループ c20a：デモ5交差点の90経路で 止まる 62→59・早歩き 32215→28822秒）
+    for (let a = w.lo + MID_SLICE_S; a + EDGE_SLICE_S < w.hi - EDGE_SLICE_S; a += MID_SLICE_S) {
+      addWindow({ startT: round6(a), endT: round6(a + EDGE_SLICE_S) });
+    }
     // 時間帯全体を指定すると core は通常BPMに近い所に着くので、次の信号に合う「端」の到着も試す（早い側・遅い側）
     if (w.hi - w.lo > 2 * EDGE_SLICE_S) {
       addWindow({ startT: round6(w.lo), endT: round6(w.lo + EDGE_SLICE_S) });

@@ -672,3 +672,24 @@ test('chooseTarget: prediction stops at the horizon inside a BPM interval', () =
     });
   }
 });
+
+test('要件 v2 PACE-03: 走りの下限は max(80, 通常BPM − 20)。通常BPM 90 なら 80 未満に下げない', async () => {
+  const { runLowBpm } = await import('./signal-input.js');
+  assert.equal(runLowBpm(150, 20), 130);
+  assert.equal(runLowBpm(95, 20), 80);
+  assert.equal(runLowBpm(70, 20), 70);   // 通常BPMが80未満なら通常BPM（下限が通常を超えない）
+  const cfg = { ...SCENARIOS.A, runner: { ...SCENARIOS.A.runner, baseBpm: 90 }, control: { ...SCENARIOS.A.control, walk: { enabled: false } } };
+  const r = simulate(cfg);
+  assert.ok(r.summary.minBpm >= 80, `minBpm ${r.summary.minBpm}`);
+});
+
+test('要件 v2 SAFE-03: 推定の信号データでは加速の提案を出さず、reason uncertain で通常BPMのまま', () => {
+  const plain = simulate(SCENARIOS.B);
+  assert.ok(plain.summary.maxBpm > SCENARIOS.B.runner.baseBpm, 'B は推定でなければ加速する');
+  for (const flag of [{ isEstimated: true }, { phaseBasis: 'estimated' }]) {
+    const cfg = { ...SCENARIOS.B, signal: { ...SCENARIOS.B.signal, ...flag } };
+    const r = simulate(cfg);
+    assert.ok(r.summary.maxBpm <= cfg.runner.baseBpm, `加速した: ${r.summary.maxBpm}`);
+    assert.ok(r.state.history.some((h) => h.reason === "uncertain"), "uncertain が出る");
+  }
+});

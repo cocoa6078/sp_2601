@@ -85,6 +85,17 @@
 - 再開の例外、安全余裕の適用範囲（規則5・7）
 - 候補の「変化が小さい」の基準（今は通常BPMとの差）
 
+## v0.5.0（10/18・完成要件 v2 の一部）
+- **`yellowS` = 歩行者の青点滅の区間**（`[greenS, greenS+yellowS)`、color は `flashing`）。車両の黄ではない。名前は当面変えない
+- **走りの下限（PACE-03）**：`max(80, 通常BPM − maxDeltaBpm)`。通常BPMが80未満なら通常BPM。推定データで減速するときの下限も同じ。`core/signal-input.js` の `runLowBpm`・`MIN_RUN_BPM`
+- **推定データでは加速しない（SAFE-03）**：`signal.isEstimated === true` か `signal.phaseBasis === 'estimated'`（route-core では `meta` の同じ項目も見る）なら、加速の提案を出さず通常BPMのまま（reason `uncertain`）。減速・早歩き・停止推奨は出す。先読みの見積もりも加速なしで計算する
+- **位相の換算**：`core/signal-input.js` の `phaseAtRunStart({ phaseS, cycleS, phaseReference }, runStartUnixS)`
+  - `'unix-epoch'`：`(走行開始の UNIX 秒 + phaseS) mod cycleS`（0 以上 cycleS 未満）
+  - `'run-start'`：`phaseS` をそのまま使う（UNIX 秒は足さない）
+  - それ以外・未指定は RangeError（読み方を取り違えないため）
+- 先読み：青の時間帯の途中にも4秒ごとに着く候補を置く（改善ループ c20a：デモ5交差点の90経路で 止まる 62→59・早歩き 32215→28822秒）
+- まだ入っていないもの：安全窓の変更と length の既定化（SAFE-02）、共通ケースの JSON（CORE-02）、noMargin の扱い
+
 ## 早歩きフェーズ（v0.4.0・v0.4.1 から既定で有効）
 > v0.4.1: 既定を `walk.enabled: true` に変更（10/17 チーム決定）。従来の数値が必要な config は `walk: { enabled: false }` を明示する。
 走り（通常BPM±maxDeltaBpm）では安全な青に間に合わず止まるしかないときだけ、時速5.3〜5.8km の早歩きでつなぐ。既定は `control.walk.enabled: true`（v0.4.1・10/17 チーム決定）。`walk: { enabled: false }` を明示すれば従来（走りのみ）と完全に同じ結果で、state・summary に新しい項目も出ない。

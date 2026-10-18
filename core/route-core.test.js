@@ -305,8 +305,14 @@ test('route 先読み: 広げた窓や青の時間帯の端の候補も試走し
 test('route 先読み: デモ5交差点では、今の信号だけを見るより止まる回数が減る（2回 → 0回）', () => {
   const a = simulateRoute({ ...ROUTE, lookahead: false }).summary;
   const b = simulateRoute(ROUTE).summary;
-  assert.equal(a.stops, 2);
-  assert.equal(b.stops, 0);
+  // 要件 v2 SAFE-03：ROUTE は推定データ（meta.isEstimated）なので加速しない。選べる走り方が減り、今の信号だけ 2→4回・先読み 0→3回
+  //（推定でないデータでは従来どおり 2回 → 0回。下で確認）
+  assert.equal(a.stops, 4);
+  assert.equal(b.stops, 3);
+  assert.equal(b.maxBpm, ROUTE.runner.baseBpm);
+  const plain = { ...ROUTE, signals: ROUTE.signals.map(({ meta, ...s }) => s) };
+  assert.equal(simulateRoute({ ...plain, lookahead: false }).summary.stops, 2);
+  assert.equal(simulateRoute(plain).summary.stops, 0);
 });
 
 test('route 先読み: 90経路で、合計では今の信号だけより大きく減り、経路ごとの悪化は小さい', () => {
