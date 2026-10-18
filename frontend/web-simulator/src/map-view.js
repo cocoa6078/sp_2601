@@ -4,6 +4,7 @@
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { MAP_CENTER } from './fixtures.js';
+import { WALK_ROUTE_ATTRIBUTION } from './walk-routing.js';
 
 const TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 const ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
@@ -30,6 +31,7 @@ export function createMapView(el, { onMapClick, onDragPoint, onTileError } = {})
   let signalMarkers = new Map();                      // key → marker（色の更新用）
   let runnerMarkers = { normal: null, runwave: null };
   let editMode = null;
+  let routeAttrOn = false;
 
   map.on('click', (e) => {
     if (editMode) onMapClick?.(editMode, { lat: e.latlng.lat, lng: e.latlng.lng });
@@ -47,6 +49,13 @@ export function createMapView(el, { onMapClick, onDragPoint, onTileError } = {})
       el.classList.toggle('picking', !!mode);
     },
     invalidate() { map.invalidateSize(); },
+    /** OSRM 道沿い経路を表示しているときだけ、経路の帰属（OSRM / OpenStreetMap contributors）を地図に出す */
+    setRouteAttribution(on) {
+      if (on === routeAttrOn) return;
+      routeAttrOn = on;
+      if (on) map.attributionControl.addAttribution(WALK_ROUTE_ATTRIBUTION);
+      else map.attributionControl.removeAttribution(WALK_ROUTE_ATTRIBUTION);
+    },
 
     /**
      * 経路と編集点・信号を描き直す（編集・確定・条件変更のときだけ呼ぶ）

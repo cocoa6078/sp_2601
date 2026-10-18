@@ -15,6 +15,9 @@ export function initialState() {
     editTool: null,                  // start | end | via | null
     draft: { start: null, end: null, via: [] },
     confirmed: false,                // 地図コースの経路確定済みか
+    routing: false,                  // 経路確定中（OSRM 取得中）。編集と確定ボタンを無効にする
+    confirmedRoute: null,            // 確定した経路（OSRM 道沿い、または直線に戻したもの）
+    routeInfo: null,                 // { kind: 'osrm' | 'polyline', reason }（画面表示用）
     candidates: FIXTURE_SIGNALS,
     candidatesOrigin: 'fixture',     // fixture | api
     toleranceM: DEFAULT_TOLERANCE_M,

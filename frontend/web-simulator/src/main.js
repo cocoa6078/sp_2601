@@ -6,8 +6,9 @@ import { Playback, SPEEDS } from './playback.js';
 import { STATUS_LABEL, initialState, statusOf } from './store.js';
 import { DEMO_SCENARIOS, defaultRunnerAndControl, getDemo } from './scenarios.js';
 import { DEMO_ROUTE_POINTS, FIXTURE_SIGNALS } from './fixtures.js';
-import { addVia, draftRoute, matchSignals, moveVia, removeVia, reorderVia } from './route-builder.js';
-import { buildRoute, pointAtDistance } from './route-geometry.js';
+import { addVia, draftPoints, draftRoute, matchSignals, moveVia, removeVia, reorderVia } from './route-builder.js';
+import { buildRoute, pointAtDistance, validateRoute } from './route-geometry.js';
+import { OSM_FIX_URL, WALK_ROUTE_LABEL, WALK_ROUTE_SOURCE, fetchWalkRoute } from './walk-routing.js';
 import { expectedFor, isRouteConfig, matchesExpected, planFromMap, runnerView, summaryOf, versions } from './engine-adapter.js';
 import { fetchCalibration, fetchSignals } from './api.js';
 import { buildReport, buildTimeSeriesCsv, csvFileName, reportFileName } from './report.js';
@@ -59,7 +60,8 @@ function recompute({ autoApply = false } = {}) {
       S.route = null;
       S.plan = { kind: 'none', reason: '経路を確定してください' };
     } else {
-      const dr = draftRoute(S.draft, 'manual');
+      // 確定時に取得した経路（OSRM 道沿い、または直線）を使う。ここでは通信しない
+      const dr = S.confirmedRoute ? { route: S.confirmedRoute, errors: validateRoute(S.confirmedRoute).errors } : draftRoute(S.draft, 'manual');
       S.route = dr.route;
       S.routeErrors = dr.errors;
       if (dr.errors.length) {
@@ -119,7 +121,7 @@ function applyStart(switchView = true) {
 
 // ---------------------------------------------------------------- 地図の編集
 function handleMapClick(tool, ll) {
-  if (statusOf(S) === 'playing' || S.confirmed) return;
+  if (statusOf(S) === 'playing' || S.confirmed || S.routing) return;
   if (tool === 'start') { S.draft = { ...S.draft, start: ll }; S.editTool = null; }
   else if (tool === 'end') { S.draft = { ...S.draft, end: ll }; S.editTool = null; }
   else if (tool === 'via') S.draft = addVia(S.draft, ll);
@@ -128,7 +130,7 @@ function handleMapClick(tool, ll) {
 }
 
 function handleDrag(kind, idx, ll) {
-  if (S.confirmed) return;
+  if (S.confirmed || S.routing) return;
   if (kind === 'start') S.draft = { ...S.draft, start: ll };
   else if (kind === 'end') S.draft = { ...S.draft, end: ll };
   else S.draft = moveVia(S.draft, idx, ll);
@@ -145,7 +147,7 @@ function afterDraftChange() {
 
 function redrawMap(fit) {
   const demo = S.courseKind === 'demo';
-  const editable = S.courseKind === 'map' && !S.confirmed;
+  const editable = S.courseKind === 'map' && !S.confirmed && !S.routing;
   const route = S.confirmed || demo ? S.route : null;
   const multi = S.adopted.length > 1;
   const signals = [];
@@ -155,6 +157,7 @@ function redrawMap(fit) {
     if (c && Number.isFinite(c.lat) && Number.isFinite(c.lng)) signals.push({ key: c.key, signalId: c.signalId, lat: c.lat, lng: c.lng, kind: 'excluded' });
   }
   mapView.setEditMode(S.courseKind === 'map' && !S.confirmed ? S.editTool : null);
+  mapView.setRouteAttribution(S.courseKind === 'map' && S.confirmed && S.routeInfo?.kind === 'osrm');
   mapView.drawCourse({ draft: S.draft, route, editable, signals, fit, demo });
   mapView.clearRunners();
   renderLive();
@@ -205,7 +208,56 @@ function renderLegend() {
     <span class="lg"><i class="runner runwave static"></i>RUNWAVE</span>
     <span class="lg">信号: 青 / 青点滅 / 赤（文字併記）</span>
     <span class="lg small">${S.overlapShift ? '同地点の重なりをずらして表示（計算位置は同じ）' : '重なるときは左右に小さくずらして表示'}</span>
-    <span class="lg small">${S.courseKind === 'demo' ? '模式コース: 実地図から測った距離ではない' : '折れ線は仮想経路（道路距離・歩道通行可能性は保証しない）'}</span>`;
+    <span class="lg small">${legendRouteNote()}</span>`;
+}
+
+function legendRouteNote() {
+  if (S.courseKind === 'demo') return '模式コース: 実地図から測った距離ではない';
+  if (S.confirmed && S.routeInfo?.kind === 'osrm') return '道沿い経路は OSRM 推定（実際の歩道・横断の通行可否・信号待ちは保証しない）';
+  return '直線の折れ線は仮想経路（道路距離・歩道通行可能性は保証しない）';
+}
+
+/** 経路の種類（確定後、または取得中）を画面に出す */
+function routeKindHtml() {
+  if (S.routing) return '<div class="muted small">経路を取得中…</div>';
+  if (!S.confirmed || !S.routeInfo) return '';
+  if (S.routeInfo.kind === 'osrm') {
+    return `<div class="small">経路の種類: <b>${esc(WALK_ROUTE_LABEL)}</b>
+      <div class="muted">経路: OSRM（FOSSGIS） © OpenStreetMap contributors ／ <a href="${OSM_FIX_URL}" target="_blank" rel="noopener">地図の誤りを OSM で修正する</a></div></div>`;
+  }
+  return `<div class="small warn">経路の種類: <b>直線（取得失敗: ${esc(S.routeInfo.reason)}）</b></div>`;
+}
+
+/** 経路確定。道沿い経路を 1 回だけ取得し、失敗・不正なら従来の直線に戻す（編集中のプレビューは常に直線） */
+async function confirmRoute() {
+  const pts = draftPoints(S.draft);
+  if (!pts || S.routing) return;
+  S.routing = true;
+  S.editTool = null;
+  renderAll();
+  redrawMap(false);
+  let route = null;
+  let info = null;
+  try {
+    const walked = await fetchWalkRoute(pts);
+    const candidate = buildRoute(walked, { id: 'manual', source: WALK_ROUTE_SOURCE });
+    const v = validateRoute(candidate);
+    if (v.ok) {
+      route = candidate;
+      info = { kind: 'osrm', reason: null };
+    } else {
+      info = { kind: 'polyline', reason: `道沿い経路が経路条件に合いません: ${v.errors.slice(0, 2).join(' / ')}` };
+    }
+  } catch (e) {
+    info = { kind: 'polyline', reason: e.message };
+  }
+  S.routing = false;
+  S.confirmedRoute = route ?? draftRoute(S.draft, 'manual').route;
+  S.routeInfo = info;
+  S.confirmed = true;
+  S.phaseS = null;
+  S.manualExclude = new Set();
+  recompute();
 }
 
 function renderBanner() {
@@ -219,7 +271,7 @@ function renderBanner() {
 
 // 設定パネル（入力欄を持つので、アクションのあとだけ描き直す）
 function renderSetup(st) {
-  const locked = st === 'playing';
+  const locked = st === 'playing' || S.routing;
   const demoOpts = DEMO_SCENARIOS.map((d) => `<option value="${d.id}" ${d.id === S.demoId ? 'selected' : ''}>${esc(d.label)}</option>`).join('');
   const tools = [['start', '開始地点を置く'], ['end', '終了地点を置く'], ['via', '経由点追加']]
     .map(([k, l]) => `<button class="btn ${S.editTool === k ? 'on' : ''}" data-act="tool" data-v="${k}" ${S.confirmed ? 'disabled' : ''}>${l}</button>`).join('');
@@ -260,15 +312,16 @@ function renderSetup(st) {
     <section class="blk"><h4>1. コース</h4>
       <label class="rad"><input type="radio" name="ck" value="demo" ${S.courseKind === 'demo' ? 'checked' : ''}> 固定デモ（模式コース）</label>
       <select data-act="demo" ${S.courseKind === 'demo' ? '' : 'disabled'}>${demoOpts}</select>
-      <label class="rad"><input type="radio" name="ck" value="map" ${S.courseKind === 'map' ? 'checked' : ''}> 地図でコース作成（手で置いた点を結ぶ折れ線）</label>
+      <label class="rad"><input type="radio" name="ck" value="map" ${S.courseKind === 'map' ? 'checked' : ''}> 地図でコース作成（置いた点を結ぶ。経路確定で道沿いに置き換え）</label>
       ${S.courseKind === 'map' ? `<div class="tools">${tools}
         <button class="btn" data-act="undo" ${S.confirmed ? 'disabled' : ''}>最後の点を取り消す</button>
         <button class="btn" data-act="clear">クリア</button></div>
         ${S.editTool ? `<div class="hint">地図をクリックして${{ start: '開始地点', end: '終了地点', via: '経由点（続けて追加できます）' }[S.editTool]}を置きます。点はドラッグで修正できます。</div>` : ''}
         <ul class="vialist">${viaList}</ul>
         <div>距離: <b>${lenText}</b></div>
+        ${routeKindHtml()}
         ${errs.length ? `<div class="warn">${errs.map(esc).join('<br>')}</div>` : ''}
-        ${S.confirmed ? '<button class="btn" data-act="unconfirm">経路を編集に戻す</button>' : `<button class="btn primary" data-act="confirm" ${pre?.route && !pre.errors.length ? '' : 'disabled'}>経路確定</button>`}` : ''}
+        ${S.confirmed ? '<button class="btn" data-act="unconfirm">経路を編集に戻す</button>' : `<button class="btn primary" data-act="confirm" ${pre?.route && !pre.errors.length && !S.routing ? '' : 'disabled'}>${S.routing ? '経路を取得中…' : '経路確定'}</button>`}` : ''}
     </section>
     <section class="blk"><h4>2. 信号</h4>${sigSection}
       <div class="row">許容距離 <input type="number" min="5" max="200" step="5" value="${S.toleranceM}" data-act="tol"> m <span class="muted small">【UI 設計値。精度保証ではない】</span></div>
@@ -452,13 +505,13 @@ function onClick(e) {
       else S.draft = { ...S.draft, start: null };
       afterDraftChange();
       break;
-    case 'clear': S.draft = { start: null, end: null, via: [] }; S.confirmed = false; S.phaseS = null; S.manualExclude = new Set(); recompute(); break;
+    case 'clear': S.draft = { start: null, end: null, via: [] }; S.confirmed = false; S.confirmedRoute = null; S.routeInfo = null; S.phaseS = null; S.manualExclude = new Set(); recompute(); break;
     case 'via-up': S.draft = reorderVia(S.draft, Number(el.dataset.i), -1); afterDraftChange(); break;
     case 'via-down': S.draft = reorderVia(S.draft, Number(el.dataset.i), 1); afterDraftChange(); break;
     case 'via-del': S.draft = removeVia(S.draft, Number(el.dataset.i)); afterDraftChange(); break;
-    case 'confirm': S.confirmed = true; S.editTool = null; S.phaseS = null; S.manualExclude = new Set(); recompute(); break;
-    case 'unconfirm': S.confirmed = false; S.phaseS = null; recompute(); break;
-    case 'to-demo': S.courseKind = 'demo'; S.confirmed = false; S.phaseS = null; recompute({ autoApply: true }); break;
+    case 'confirm': confirmRoute(); break;
+    case 'unconfirm': S.confirmed = false; S.confirmedRoute = null; S.routeInfo = null; S.phaseS = null; recompute(); break;
+    case 'to-demo': S.courseKind = 'demo'; S.confirmed = false; S.confirmedRoute = null; S.routeInfo = null; S.phaseS = null; recompute({ autoApply: true }); break;
     case 'apply': applyStart(true); break;
     case 'api-signals': doApiSignals(); break;
     case 'api-calib': doApiCalib(); break;
