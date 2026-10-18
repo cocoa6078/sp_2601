@@ -88,7 +88,9 @@ cd backend && npm test（node:test。app を空きポートで listen して検�
 phaseS は周期内位置（秒）。基準は phaseReference で決まる。
 - "run-start": 走行開始 t=0 時点の周期内位置。/api/signals（デモ5件）。Web シミュレーターはこの意味で使う。
 - "unix-epoch": UNIX 時刻 0 秒時点の周期内位置。/api/signals/all・/region・along-route。値は今 0 のまま（仮値）。
-- core での換算: phaseS_core = (走行開始UNIX秒 + phaseS_api) mod cycleS （端末時計が正しい前提）
+- core に渡す走行開始時の位相（phaseReference で分ける）:
+  - "unix-epoch": phaseS_core = (走行開始UNIX秒 + phaseS_api) mod cycleS （端末時計が正しい前提）
+  - "run-start": phaseS_core = phaseS_api （すでに走行開始時の位相なので UNIX 秒は足さない）
 
 ### 品質項目の関係
 - phaseBasis が正本。isEstimated は派生（phaseBasis !== "measured"）。quality は旧項目で phaseBasis と同値。
