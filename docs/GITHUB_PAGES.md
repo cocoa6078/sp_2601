@@ -22,4 +22,4 @@ npm run build -- --config vite.config.pages.js
 
 ## API 接続
 
-API の既定 URL は `https://sp2601.vercel.app` です。公開先ブラウザーから API を呼べるには、Vercel 側が Pages のオリジンからの CORS リクエストを許可している必要があります。許可設定と公開後の実通信は未確認です。
+API の既定 URL は `https://sp-2601.vercel.app` です。公開先ブラウザーから API を呼べるには、Vercel 側が Pages のオリジンからの CORS リクエストを許可している必要があります。許可設定と公開後の実通信は未確認です。
