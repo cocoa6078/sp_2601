@@ -1,6 +1,7 @@
 // 画面から core の呼び出しを隠す層。
 // 信号1件は既存の1交差点 core（createRun/step）、2件以上は route-core（createRouteRun/stepRoute）で計算する。
 import { core, routeNs } from './core-ns.js';
+import { toCoreSignal } from './phase.js';
 
 export const TPS = 10;
 export const DT = core.DT;                  // 0.1 秒固定
@@ -15,16 +16,23 @@ export const versions = () => ({ coreVersion: core.CORE_VERSION, routeVersion: r
  * 計算に使うエンジンを選ぶ。
  * @returns {{kind:'single', config}|{kind:'unsupported', reason}|{kind:'none', reason}|{kind:'invalid', reason}}
  */
-export function planFromMap({ route, adopted, runner, control }) {
+export function planFromMap({ route, adopted, runner, control, runStartUnixS = null }) {
   if (!route) return { kind: 'none', reason: '経路が確定していません' };
   if (adopted.length === 0) return { kind: 'none', reason: 'この経路に対応する信号なし' };
+  // phaseS の基準を core 用（run-start）に直す。基準は信号自身の phaseReference、無ければ API 由来の apiMeta から
+  let signals;
+  try {
+    signals = adopted.map((a) => toCoreSignal({ ...a.signal, phaseReference: a.signal.phaseReference ?? a.apiMeta?.phaseReference ?? undefined }, runStartUnixS));
+  } catch (e) {
+    return { kind: 'invalid', reason: `位相の換算に失敗: ${e.message}` };
+  }
   if (adopted.length > 1) {
     // 複数信号: route-core（連続走行）。atM は経路の開始点から測り直した s、goalM は経路長。id は key（地域＋元ID）で一意にする
     const config = {
       runner: { ...runner },
       control: JSON.parse(JSON.stringify(control)),
       goalM: route.lengthM,
-      signals: adopted.map((a) => ({ id: a.key, atM: a.s, signal: { ...a.signal }, meta: { signalId: a.signalId, origin: a.origin ?? null, note: a.note ?? null, isEstimated: true } })),
+      signals: adopted.map((a, i) => ({ id: a.key, atM: a.s, signal: signals[i], meta: { signalId: a.signalId, origin: a.origin ?? null, note: a.note ?? null, isEstimated: true } })),
     };
     try {
       routeNs.validateRouteConfig(config);
@@ -36,7 +44,7 @@ export function planFromMap({ route, adopted, runner, control }) {
   const a = adopted[0];
   const config = {
     runner: { ...runner },
-    signal: { ...a.signal },
+    signal: signals[0],
     route: { crossingX: a.s, goalX: route.lengthM },
     control: JSON.parse(JSON.stringify(control)),
   };

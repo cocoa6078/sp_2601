@@ -69,13 +69,13 @@ function recompute({ autoApply = false } = {}) {
         S.adopted = S.match.adopted.map((a) => ({ ...a, originLabel: originLabel() }));
         if (S.phaseS != null && S.adopted.length === 1) {
           S.initialPhaseS = S.adopted[0].signal.phaseS;
-          S.adopted[0] = { ...S.adopted[0], signal: { ...S.adopted[0].signal, phaseS: S.phaseS } };
+          S.adopted[0] = { ...S.adopted[0], signal: { ...S.adopted[0].signal, phaseS: S.phaseS, phaseReference: 'run-start' } };
         } else S.initialPhaseS = S.adopted[0]?.signal.phaseS ?? null;
         if (S.match.errors.length) {
           S.plan = { kind: 'invalid', reason: S.match.errors.join(' / ') };
         } else {
           const { runner, control } = runnerAndControl();
-          S.plan = planFromMap({ route: dr.route, adopted: S.adopted, runner, control });
+          S.plan = planFromMap({ route: dr.route, adopted: S.adopted, runner, control, runStartUnixS: (S.runStartUnixS ??= Math.floor(Date.now() / 1000)) });
         }
       }
     }

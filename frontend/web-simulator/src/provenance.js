@@ -13,6 +13,8 @@ export function pickApiMeta(raw) {
     positionAccuracyM: orNull(r.positionAccuracyM),
     fetchedAt: orNull(r.fetchedAt),
     crossingDirection: orNull(r.crossingDirection),
+    // phaseS の基準（run-start | unix-epoch）。API が返したときだけ保持し、換算は phase.js の toCorePhaseS を通す
+    ...(r.phaseReference !== undefined ? { phaseReference: r.phaseReference } : {}),
   };
 }
 

@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test \"test/*.test.js\""
+    "test": "node --test \"test/*.test.js\"",
+    "acceptance": "node scripts/acceptance-speed.js"
   },
   "dependencies": {
     "leaflet": "^1.9.4"
