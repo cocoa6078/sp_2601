@@ -53,6 +53,9 @@ test('extractRunner: ガイドの日本語キー（歩幅・通常BPM）と英�
 test('toCalibrationBody / toLogBody: ガイドの形で送る', () => {
   assert.deepEqual(toCalibrationBody({ strideM: 0.85, baseBpm: 160 }), { '歩幅': 0.85, '通常BPM': 160 });
   assert.deepEqual(toLogBody('RUNWAVE適用時', { stops: 0, totalTimeS: 283.4 }), { 'シナリオ': 'RUNWAVE適用時', '停止回数': 0, '総所要時間': 283.4 });
+  // 改善ループ c09m：停止時間と早歩きの記録も、要約にあれば送る
+  assert.deepEqual(toLogBody('早歩き', { stops: 1, totalTimeS: 300, stopTimeS: 12.5, walkCount: 1, walkTimeS: 40, walkDistanceM: 60 }),
+    { 'シナリオ': '早歩き', '停止回数': 1, '総所要時間': 300, '停止時間': 12.5, walkCount: 1, walkTimeS: 40, walkDistanceM: 60 });
 });
 
 // ---------- 確認スクリプト（偽サーバー相手） ----------

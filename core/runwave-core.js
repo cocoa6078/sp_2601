@@ -79,7 +79,11 @@ export function validateConfig(config) {
   need(typeof w.enabled === 'boolean', 'control.walk.enabled は true/false');
   need(isPos(w.minKmh) && isNum(w.maxKmh) && w.minKmh <= w.maxKmh, 'control.walk: 0 < minKmh ≤ maxKmh');
   need(isPos(w.stepKmh), 'control.walk.stepKmh は正の数');
-  need(w.maxKmh < speedOf(r.strideM, r.baseBpm - c.maxDeltaBpm) * 3.6, 'control.walk.maxKmh は走りの下限の速さより遅くする');
+  // 早歩きの速さを明示したときだけ、走りの下限より遅いことを求める。既定のままなら controlOf で切り詰める
+  // （既定のままだと、走りの下限が 5.8km/h 以下のゆっくり走る人で RangeError になっていた。改善ループ c10a）
+  const walkGiven = config.control?.walk ?? {};
+  const walkSpeedGiven = walkGiven.maxKmh !== undefined || walkGiven.minKmh !== undefined;
+  need(!walkSpeedGiven || w.maxKmh < speedOf(r.strideM, r.baseBpm - c.maxDeltaBpm) * 3.6, 'control.walk.maxKmh は走りの下限の速さより遅くする');
   need(r.walkStrideM === undefined || isPos(r.walkStrideM), 'runner.walkStrideM は正の数');
   // 早歩きでは point モデルでも横断長ぶん歩いて渡るので、ゴールは横断の先に置く
   need(!w.enabled || route.goalX > route.crossingX + s.crossingM, '早歩きを使うときは goalX を crossingX + 横断長 より先にする');
@@ -90,9 +94,20 @@ export function validateConfig(config) {
 function controlOf(config) {
   const c = { ...DEFAULT_CONTROL, ...(config.control || {}) };
   const base = config.runner.baseBpm;
+  const walk = { ...DEFAULT_CONTROL.walk, ...(c.walk || {}) };
+  // 走りの下限の速さ以上の早歩きは意味が無い（走ったほうが遅い）。早歩きの速さを走りの下限より遅い範囲に切り詰め、
+  // 範囲が残らなければ早歩きを使わない（改善ループ c10a：ゆっくり走る人で既定の早歩きが RangeError になっていた）
+  if (walk.enabled) {
+    const runLowKmh = speedOf(config.runner.strideM, base - c.maxDeltaBpm) * 3.6;
+    if (walk.maxKmh >= runLowKmh) {
+      const n = Math.floor((runLowKmh - walk.minKmh) / walk.stepKmh - 1e-9);
+      if (n < 0) walk.enabled = false;
+      else walk.maxKmh = round6(walk.minKmh + n * walk.stepKmh);
+    }
+  }
   return {
     ...c,
-    walk: { ...DEFAULT_CONTROL.walk, ...(c.walk || {}) },
+    walk,
     baseLow: base - c.maxDeltaBpm, baseHigh: base + c.maxDeltaBpm,
     intervalTicks: Math.round(c.stepIntervalS * TPS),
     targetTicks: Math.round(c.targetIntervalS * TPS),
@@ -105,6 +120,9 @@ function crossingLength(config) {
   return model === 'length' ? config.signal.crossingM : 0;
 }
 const crossTimeOf = (config, bpm) => crossingLength(config) / speedOf(config.runner.strideM, bpm);
+// 進入の判定に使う横断時間。青そのものが横断時間より短い信号では、渡り切れる青は来ないので、青の始まりに入る
+// （以前は length モデルで待ち続けてゴールしなかった。改善ループ c11a：ファズテストで発見）
+const enterTimeOf = (signal, crossTimeS) => Math.min(crossTimeS, Math.max(0, signal.greenS - 1e-6));
 
 // ---------- F-01 ----------
 export function calibrate({ distanceM, steps, timeS }) {
@@ -214,10 +232,14 @@ function predictArrival(state, config, c, ctl) {
     if (tick !== 0 && tick % ctl.intervalTicks === 0) bpm += clamp(target - bpm, -ctl.stepBpm, ctl.stepBpm);
     bpm = clamp(bpm, ctl.baseLow, ctl.baseHigh);
     const v = speedOf(strideM, bpm);
-    const nx = x + v * DT;
-    if (nx >= crossingX) return { arriveT: tick / TPS + (crossingX - x) / v, bpm };
-    x = nx;
-    tick++;
+    // Keep tick-by-tick position additions, but reuse the speed until the next BPM update.
+    const moveM = v * DT;
+    const endTick = Math.min(limit, tick + ctl.intervalTicks - tick % ctl.intervalTicks);
+    for (; tick < endTick; tick++) {
+      const nx = x + moveM;
+      if (nx >= crossingX) return { arriveT: tick / TPS + (crossingX - x) / v, bpm };
+      x = nx;
+    }
   }
   return null;
 }
@@ -257,6 +279,34 @@ function bestWalkAt(config, ctl, fromX, fromT, win = null) {
   }
   return best;
 }
+// 今すぐ歩いても間に合わないとき、走りの下限へ向けて走り続け、1秒ごとに「ここから早歩きで間に合うか」を調べる。
+// 間に合う時点があれば、その時刻を返す（無ければ null）。「止まるのが避けられない」の判断から
+// 「しばらく走ってから歩く」組み合わせが抜けていて、停止推奨を一時的に誤って出していた（改善ループ c14a）
+function laterWalkPlan(state, config, ctl, win) {
+  const { strideM } = config.runner;
+  // 先に、早歩きで着ける時刻の範囲に安全な青があるかを大まかに調べる（最速の早歩きの短い横断時間で広めに取るので、
+  // 間に合う時点を見落とさない）。あるときだけ細かく調べる（計算を軽くする。改善ループ c16）
+  const vMin = ctl.walk.minKmh / 3.6, vMax = ctl.walk.maxKmh / 3.6;
+  const now = state.tick / TPS;
+  const coarse = safeGreenWindows(config.signal, now, now + (config.route.crossingX - state.x) / vMin + 1, { ...ctl, crossTimeS: config.signal.crossingM / vMax });
+  if (!coarse.length) return null;
+  let tick = state.tick, x = state.x, bpm = state.bpm;
+  for (let i = 0; i < 36000; i++) {
+    if (tick !== 0 && tick % ctl.intervalTicks === 0) bpm += clamp(ctl.baseLow - bpm, -ctl.stepBpm, ctl.stepBpm);
+    bpm = clamp(bpm, ctl.baseLow, ctl.baseHigh);
+    x += speedOf(strideM, bpm) * DT;
+    tick++;
+    if (x >= config.route.crossingX) return null;
+    if (tick % ctl.targetTicks === 0) {
+      const t = tick / TPS, d = config.route.crossingX - x;
+      if (!coarse.some((cw) => cw.endT > t + d / vMax && cw.startT <= t + d / vMin)) continue;
+      const w = bestWalkAt(config, ctl, x, t, win);
+      if (w && (!win || (w.arriveT >= win.startT && w.arriveT < win.endT))) return { t: tick / TPS };
+    }
+  }
+  return null;
+}
+
 // 走りの目標 c に向けて n tick 走り続けた後の位置（横断地点に着いたら crossed）
 function runFor(state, config, c, ctl, n) {
   const { strideM } = config.runner;
@@ -313,18 +363,29 @@ function chooseTargetIn(state, config, win) {
   }
   // fromT は現在時刻（到着時刻にすると切り詰め＋丸めで境界判定がずれる）
   const windowsUntil = (untilT, crossTimeS) => safeGreenWindows(signal, now, untilT, { ...ctl, crossTimeS });
-  const feasible = (c) => {
-    const p = predictArrival(state, config, c, ctl);
+  // 同じ目標の到着予測は1回だけ計算する（渡り切り優先の候補探しと従来の候補探しで同じ目標を2回予測していた。改善ループ c17p：結果は同じ）
+  const arrivals = new Map();
+  const arriveOf = (c) => {
+    if (!arrivals.has(c)) arrivals.set(c, predictArrival(state, config, c, ctl));
+    return arrivals.get(c);
+  };
+  const feasibleWith = (crossOf) => (c) => {
+    const p = arriveOf(c);
     if (!p || !inWin(p.arriveT)) return false;
     // 窓の端ちょうどの到着は、信号判定（誤差を安全側に倒す）で非青になりうるので、ごくわずかな余白を取る。
     // 毎秒選び直すと到着が窓の端に寄るため、余裕0の設定で必要になる
-    return windowsUntil(p.arriveT, crossTimeOf(config, p.bpm))
+    return windowsUntil(p.arriveT, crossOf(p.bpm))
       .some((w) => p.arriveT >= w.startT + PLAN_EPS && p.arriveT < w.endT - PLAN_EPS);
   };
+  const feasible = feasibleWith((bpm) => crossTimeOf(config, bpm));
+  // point モデルでも、その速さで横断を渡り切る青が残る時間帯に着ける候補があれば、そちらを優先する
+  // （渡り終えが青でない横断を減らす。無ければ従来どおり「横断地点で青なら入れる」時間帯で選ぶ）
+  const crossAwareFirst = crossingLength(config) === 0;
+  const feasibleSafe = feasibleWith((bpm) => signal.crossingM / speedOf(config.runner.strideM, bpm));
 
   // 到着時刻は目標BPMが高いほど早い（単調）。最速と最遅の到着の間に安全な窓が無ければ、どの候補も不可
-  const pFast = predictArrival(state, config, ctl.baseHigh, ctl);
-  const pSlow = predictArrival(state, config, ctl.baseLow, ctl);
+  const pFast = arriveOf(ctl.baseHigh);
+  const pSlow = arriveOf(ctl.baseLow);
   const anyWindow = !pFast || !pSlow
     || windowsUntil(pSlow.arriveT, crossTimeOf(config, pFast.bpm)).some((w) => w.endT > pFast.arriveT && w.startT <= pSlow.arriveT);
 
@@ -333,18 +394,19 @@ function chooseTargetIn(state, config, win) {
   if (anyWindow) {
     const cands = [base];
     for (let d = 1; d <= ctl.maxDeltaBpm; d++) cands.push(base - d, base + d);
-    chosen = cands.find(feasible) ?? null;
+    chosen = (crossAwareFirst ? cands.find(feasibleSafe) : undefined) ?? cands.find(feasible) ?? null;
   }
   if (chosen !== null) {
-    // 同じ差の候補が両方使えるときは、今の目標を保つ（加速と減速を行き来しない）
-    if (state.targetBpm !== chosen && Math.abs(state.targetBpm - base) === Math.abs(chosen - base) && feasible(state.targetBpm)) {
+    // 同じ差の候補が両方使えるときは、今の目標を保つ（加速と減速を行き来しない）。保つ目標も同じ基準で使えること
+    const usable = crossAwareFirst && feasibleSafe(chosen) ? feasibleSafe : feasible;
+    if (state.targetBpm !== chosen && Math.abs(state.targetBpm - base) === Math.abs(chosen - base) && usable(state.targetBpm)) {
       chosen = state.targetBpm;
     }
     return { targetBpm: chosen, mode: modeFor(chosen), reason: chosen === base ? 'none' : 'signal' };
   }
   // 余裕付きの計画は無い。通常BPMで青に着けるなら通常どおり（余裕なし）、着けなければ停止推奨
   // 停止推奨: 通常BPMへ段階的に戻しながら横断地点まで進み、非青ならそこで止まる
-  const pBase = predictArrival(state, config, base, ctl);
+  const pBase = arriveOf(base);
   // 時間帯の指定があるときは、余裕なしで通るより、指定の時間帯に早歩きで着くほうを先に調べる
   if (!win && pBase && canEnter(signal, pBase.arriveT, crossTimeOf(config, pBase.bpm))) {
     return { targetBpm: base, mode: modeFor(base), reason: 'noMargin' };
@@ -366,8 +428,15 @@ function chooseTargetIn(state, config, win) {
       }
       return { targetBpm: walkBpmOf(config, nowWalk.kmh), mode: 'walking', reason: 'walkBridge', targetSpeedKmh: nowWalk.kmh };
     }
+    // 今すぐ歩いても間に合わないが、走りの下限でしばらく走ってから歩けば間に合う → 停止推奨にせず、走りの下限へ
+    if (laterWalkPlan(state, config, ctl, win)) return { targetBpm: ctl.baseLow, mode: 'adjusting', reason: 'walkBridge' };
   }
-  return { targetBpm: base, mode: 'stopRecommended', reason: 'unavoidable' };
+  // 止まるのが避けられないときは、走りの下限へ段階的に下げながら近づく（遅く着くほど待つ時間が短い。
+  // 改善ループ c07a・要合意：以前は通常BPMへ戻して早く着き、そのぶん長く待っていた。規則4の変更）
+  // 早歩きが使えるなら、最も遅い早歩きで近づく（さらに遅く着いて待つ時間を減らす。改善ループ c08a・要合意）。
+  // ただし先に信号がある区間（route.lastLeg === false）では使わない（遅れが後ろの信号に響くため。改善ループ c08b）
+  if (ctl.walk.enabled && config.route?.lastLeg !== false) return { targetBpm: walkBpmOf(config, ctl.walk.minKmh), mode: 'stopRecommended', reason: 'unavoidable', targetSpeedKmh: ctl.walk.minKmh, walkSlow: true };
+  return { targetBpm: ctl.baseLow, mode: 'stopRecommended', reason: 'unavoidable' };
 }
 
 // ---------- 走行 ----------
@@ -417,7 +486,7 @@ export function step(state, config) {
   if (s.phase === 'waiting') {
     // 再開は通常BPMへ即時（段階調整・±20 の例外。待機中は bpm=0、速度0）
     // このステップの途中で青になる場合も、その時刻で再開する（短い青の取り逃しと停止時間の過大計上を防ぐ）
-    const resumeT = resumeTimeWithin(signal, t, t + DT, crossTimeOf(config, base));
+    const resumeT = resumeTimeWithin(signal, t, t + DT, enterTimeOf(signal, crossTimeOf(config, base)));
     if (resumeT === null) return finishTick(s, config);
     s = { ...s, phase: crossingLength(config) > 0 ? 'crossing' : 'after', bpm: base, targetBpm: base, mode: 'normal',
       stopTimeS: round6(s.stopTimeS + (resumeT - s.stoppedAtT)), stoppedAtT: null, runStartT: resumeT };
@@ -433,7 +502,7 @@ export function step(state, config) {
     s.reason = d.reason;
     if ('gait' in s && s.phase === 'approach') {
       // 走り → 早歩きはすぐ切り替える（段階調整の例外。減速なので安全側）。早歩き中は速さを1秒ごとに見直す
-      if (d.mode === 'walking' && s.gait !== 'walk') { s.gait = 'walk'; s.walkCount += 1; }
+      if ((d.mode === 'walking' || d.walkSlow) && s.gait !== 'walk') { s.gait = 'walk'; s.walkCount += 1; }
       if (s.gait === 'walk' && d.targetSpeedKmh != null) s.targetSpeedKmh = d.targetSpeedKmh;
     }
   }
@@ -464,7 +533,7 @@ export function step(state, config) {
   // 1ステップで横断地点をまたぐ場合も、到達した時刻の信号で判定する
   if (s.phase === 'approach' && nx >= route.crossingX) {
     const arriveT = t + (route.crossingX - s.x) / v;
-    if (canEnter(signal, arriveT, len / v)) {
+    if (canEnter(signal, arriveT, enterTimeOf(signal, len / v))) {
       s.phase = 'crossing';
       // 早歩きで進入したら、point モデルでも横断長ぶんは同じ速さで歩いて渡る（横断中は速さを保つ）
       if (walking) s.walkUntilX = route.crossingX + signal.crossingM;
@@ -477,7 +546,7 @@ export function step(state, config) {
       movedS = arriveT - t;
       s.longestRunS = round6(Math.max(s.longestRunS, arriveT - s.runStartT));
       // 止まった同じステップの残り時間のうちに青になれば、そこで再開する
-      const resumeT = resumeTimeWithin(signal, arriveT, t + DT, crossTimeOf(config, base));
+      const resumeT = resumeTimeWithin(signal, arriveT, t + DT, enterTimeOf(signal, crossTimeOf(config, base)));
       if (resumeT === null) {
         nx = route.crossingX;
         s.phase = 'waiting';

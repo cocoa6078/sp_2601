@@ -244,11 +244,20 @@ test('chooseTarget: 制御OFFなら常に通常BPM', () => {
 // ---------- アルゴリズム修正（v0.3.0）の回帰テスト ----------
 test('横断地点が遠くても、通常で止まらないなら加速しない（予測範囲を距離から決める）', () => {
   for (const crossingX of [600, 1000, 1500]) {
-    const cfg = { ...SCENARIOS.A, route: { crossingX, goalX: crossingX + 200 } };
+    // 改善ループ c02e：渡り切りのための調整（横断長があるとき）が入らないよう、横断長0で予測範囲の不具合だけを確かめる
+    const cfg = { ...SCENARIOS.A, signal: { ...SCENARIOS.A.signal, crossingM: 0 }, route: { crossingX, goalX: crossingX + 200 } };
     const { normal, runwave } = compare(cfg);
     if (normal.stops === 0) assert.equal(runwave.maxBpm, 150, `${crossingX}m`);
     assert.equal(chooseTarget(createRun(cfg), cfg).mode === 'stopRecommended' && normal.stops === 0, false, `${crossingX}m で誤った停止推奨`);
   }
+});
+
+test('point でも渡り切れる時間帯を優先：通常で止まらなくても、渡り終える前に青が終わるなら小さく調整する（止まらない）', () => {
+  const cfg = { ...SCENARIOS.A, route: { crossingX: 1000, goalX: 1200 } };
+  const { normal, runwave } = compare(cfg);
+  assert.equal(normal.stops, 0);
+  assert.equal(runwave.stops, 0);
+  assert.equal(runwave.maxBpm, 152);   // 150 のままだと 20m を渡り終える前に青が終わる
 });
 
 test('遠い横断地点でも RUNWAVE の停止が増えない（全位相）', () => {
@@ -561,13 +570,54 @@ test('早歩き：通常走行（制御OFF）は早歩きにならない。同�
   }
 });
 
-test('早歩きのシナリオ W：走りだけでは35秒止まるが、早歩きでつないで止まらない', () => {
+test('ゆっくり走る人でも既定の早歩きで動く（早歩きの速さを走りの下限より遅い範囲に切り詰める・改善ループ c10a）', () => {
+  // 歩幅0.7m・通常140：走りの下限 5.04km/h は早歩きの最遅 5.3km/h より遅い → 早歩きは使わない
+  const slow = { ...SCENARIOS.A, runner: { strideM: 0.7, baseBpm: 140 } };
+  assert.doesNotThrow(() => validateConfig(slow));
+  const r = compare(slow);
+  assert.equal(typeof r.runwave.totalTimeS, 'number');
+  assert.equal(r.runwave.walkCount ?? 0, 0);
+  // 歩幅0.8m・通常140：走りの下限 5.76km/h → 早歩きは 5.3〜5.7km/h
+  const mid = { ...SCENARIOS_WALK.W, runner: { strideM: 0.8, baseBpm: 140, walkStrideM: 0.75 } };
+  assert.doesNotThrow(() => validateConfig(mid));
+  const st = simulate(mid).state;
+  assert.ok(st.finished);
+  for (const h of st.history) if (h.gait === 'walk' && h.phase === 'approach') assert.ok(h.speedMps * 3.6 <= 5.7 + 1e-9, `${h.speedMps * 3.6}`);
+  // 早歩きの速さを明示しておかしな値にしたときは従来どおりエラー
+  assert.throws(() => validateConfig({ ...SCENARIOS.A, runner: { strideM: 0.8, baseBpm: 140 }, control: { ...SCENARIOS.A.control, walk: { maxKmh: 5.8 } } }), RangeError);
+});
+
+test('length モデルで青が横断時間より短い信号でも、待ち続けずに青の始まりに入ってゴールする（改善ループ c11a）', () => {
+  // 青5秒・横断20m（150BPM で約10秒）：渡り切れる青は来ない
+  const cfg = { runner: { strideM: 0.8, baseBpm: 150 }, signal: { cycleS: 60, greenS: 5, yellowS: 0, redS: 55, phaseS: 10, crossingM: 20 },
+    route: { crossingX: 300, goalX: 600 }, control: { crossingModel: 'length', startMarginS: 3, endMarginS: 5 } };
+  for (const enabled of [false, true]) {
+    const r = simulate(withControl(cfg, { enabled }));
+    assert.ok(r.state.finished, `enabled=${enabled}`);
+    assert.equal(r.summary.stops, 1);
+  }
+});
+
+test('走りの下限でしばらく走ってから早歩きにすれば間に合うときは、停止推奨を出さず止まらない（改善ループ c14a）', () => {
+  // 周期60・青18・300m：今すぐ早歩きにすると早く着きすぎ、走りだけでは青に合わない。しばらく走ってから歩けば間に合う
+  // （以前は「止まるのが避けられない」と判断して停止推奨を出し、最も遅い早歩きで近づいて止まっていた）
+  for (const phaseS of [0, 5, 10]) {
+    const cfg = { runner: { strideM: 0.8, baseBpm: 150 }, signal: { cycleS: 60, greenS: 18, yellowS: 5, redS: 37, phaseS, crossingM: 15 },
+      route: { crossingX: 300, goalX: 365 }, control: { startMarginS: 3, endMarginS: 5 } };
+    const r = simulate(cfg);
+    assert.equal(r.summary.stops, 0, `位相${phaseS}`);
+    for (const h of r.state.history) if (h.phase === 'approach') assert.notEqual(h.mode, 'stopRecommended', `位相${phaseS} t=${h.t}`);
+  }
+});
+
+test('早歩きのシナリオ W：走りだけでは止まる（下限へ下げて近づくので待ちは約7.6秒）が、早歩きでつないで止まらない', () => {
   const c = SCENARIOS_WALK.W;
   const runOnly = compare(withControl(c, { walk: { enabled: false } })).runwave;
   const { normal, runwave } = compare(c);
   assert.equal(normal.stops, 1);
   assert.equal(runOnly.stops, 1);
-  near(runOnly.stopTimeS, 35);
+  // 改善ループ c07：停止推奨のときは走りの下限へ下げて遅く着くので、待ちが 35秒 → 約7.6秒に減る（規則4の変更）
+  near(runOnly.stopTimeS, 7.615385);
   assert.equal(runwave.stops, 0);
   assert.equal(runwave.walkCount, 1);
 });
@@ -587,4 +637,38 @@ test('route.arriveWindow: 指定が無ければ従来どおり。指定すれば
   const s2 = simulate({ ...base, route: { ...base.route, arriveWindow: { startT: 10, endT: 11 } } }).state;
   assert.equal(s2.finishTimeS, s0.finishTimeS);
   assert.equal(s2.stops, s0.stops);
+});
+
+test('chooseTarget: prediction keeps the global BPM update boundaries', () => {
+  const ticks = [0, 39, 40, 41, 79, 80, 81];
+  const cases = [
+    { stepIntervalS: 4, stepBpm: 2, expected: [134, 134, 134, 133, 133, 133, 133] },
+    { stepIntervalS: 8, stepBpm: 1, expected: [132, 132, 132, 132, 132, 132, 131] },
+  ];
+  for (const { stepIntervalS, stepBpm, expected } of cases) {
+    const c = withControl(noWalk(SCENARIOS.A), { stepIntervalS, stepBpm });
+    for (const [i, tick] of ticks.entries()) {
+      const s = { ...createRun(c), tick, t: tick / 10, x: tick / 5, bpm: 142, targetBpm: 142 };
+      assert.deepEqual(chooseTarget(s, c),
+        { targetBpm: expected[i], mode: 'adjusting', reason: 'signal' },
+        `interval=${stepIntervalS}, tick=${tick}`);
+    }
+  }
+});
+
+test('chooseTarget: prediction stops at the horizon inside a BPM interval', () => {
+  const base = {
+    runner: { strideM: 0.8, baseBpm: 150 },
+    control: { walk: { enabled: false } },
+    route: { crossingX: 8, goalX: 20 },
+    signal: { cycleS: 60, greenS: 30, yellowS: 5, redS: 25, phaseS: 0, crossingM: 0 },
+  };
+  for (const horizonS of [3.9, 4, 4.1]) {
+    const c = withControl(base, { horizonS });
+    assert.deepEqual(chooseTarget(createRun(c), c), {
+      targetBpm: horizonS < 4 ? 130 : 150,   // 改善ループ c07：停止推奨のときの目標は走りの下限（規則4の変更）
+      mode: horizonS < 4 ? 'stopRecommended' : 'normal',
+      reason: horizonS < 4 ? 'unavoidable' : 'none',
+    });
+  }
 });

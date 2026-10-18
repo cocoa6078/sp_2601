@@ -46,6 +46,9 @@ export function stopRisk(signal, approachM, runner, control) {
   // length モデルでは、渡り切る時間ぶん安全な青が短くなる（通常BPMの速さで近似）
   const crossS = c.crossingModel === 'length' ? signal.crossingM / speedOf(runner.strideM, runner.baseBpm) : 0;
   const safeGreenS = Math.max(0, signal.greenS - c.startMarginS - c.endMarginS - crossS);
+  // 安全な青が無い信号は、RUNWAVE も狙って合わせられない（偶然青に着くだけ）ので、通常走行と同じ見込みにする
+  // （以前は動かせる幅を足して、青0秒でも止まりやすさ0になっていた。改善ループ c03・Codex の指摘）
+  if (safeGreenS <= 0) return (signal.cycleS - signal.greenS) / signal.cycleS;
   const spread = arrivalSpread(approachM, runner, c);
   // 早歩きは point モデルでも横断を歩いて渡るので、遅い早歩きほど安全な青が短い。渡り切る青が残る早歩きのうち
   // 最も遅い速さ（core と同じ刻み）で着く時刻を「最も遅い着き方」とする。どの速さでも残らなければ走りの分だけ
@@ -62,7 +65,13 @@ export function stopRisk(signal, approachM, runner, control) {
     }
   }
   const widthS = slowestS - spread.fastestS;
-  return Math.min(1, Math.max(0, 1 - (widthS + safeGreenS) / signal.cycleS));
+  // RUNWAVE は少なくとも通常走行と同じ動きはできる（合わせられないときも青なら通過する）ので、通常走行の見込みを上限にする
+  // （安全な青がごく短いとき、通常走行より止まりやすい値になり、青を長くすると止まりやすくなる逆転があった。改善ループ c12a：ファズテストで発見）
+  const normalRisk = (signal.cycleS - signal.greenS) / signal.cycleS;
+  // 止まるのが避けられないとき、core は最も遅い速さで近づく（改善ループ c07a・c08b）。そのとき着く時刻が青の始まり直後
+  // （開始後の余裕の中）なら止まらずに通過するので、その幅（開始後の余裕）も止まらずに済む範囲に足す（改善ループ c13a）
+  const slowPassS = Math.min(c.startMarginS, signal.greenS);
+  return Math.min(normalRisk, Math.max(0, 1 - (widthS + safeGreenS + slowPassS) / signal.cycleS));
 }
 
 // 経路の止まりやすさ。信号ごとの「動かせる距離」は、前の信号の横断の終わり（最初はスタート）からの距離

@@ -46,6 +46,25 @@ test('止まりやすさ: 式は位相を全部試した結果とほぼ一致（
   }
 });
 
+test('止まりやすさ: 安全な青が無い信号（青0秒・余裕より短い青）は通常走行と同じ見込み（改善ループ c03）', () => {
+  assert.equal(stopRisk(sig(100, 0), 1000, runner, control), 1);
+  assert.equal(stopRisk(sig(100, 6), 1000, runner, control), 94 / 100);   // 青6秒は余裕3＋5秒より短い
+  assert.ok(stopRisk(sig(100, 20), 1000, runner, control) < 94 / 100);
+});
+
+test('止まりやすさ: 通常走行の見込みを上回らず、青が長いほど小さい（改善ループ c12a：ファズテストで見つけた逆転）', () => {
+  const fast = { strideM: 1.38, baseBpm: 182 };
+  const ctl = { startMarginS: 5, endMarginS: 5, crossingModel: 'length', walk: { enabled: false } };
+  let prev = 1;
+  for (let g = 5; g <= 55; g += 1) {
+    const s = { cycleS: 60, greenS: g, yellowS: 0, redS: 60 - g, phaseS: 0, crossingM: 30 };
+    const r = stopRisk(s, 183, fast, ctl);
+    assert.ok(r <= (60 - g) / 60 + 1e-12, `青${g}: ${r}`);
+    assert.ok(r <= prev + 1e-12, `青${g}: ${prev} → ${r}`);
+    prev = r;
+  }
+});
+
 test('経路の止まりやすさ: 動かせる距離は前の信号の横断の終わりから測る', () => {
   const route = { distanceM: 800, signals: [{ id: 'a', atM: 300, signal: SAPPORO_1 }, { id: 'b', atM: 615, signal: SAPPORO_2 }] };
   const r = routeStopRisk(route, runner, control);

@@ -74,4 +74,9 @@ export function extractRunner(json) {
 export const toCalibrationBody = ({ strideM, baseBpm }) => ({ '歩幅': strideM, '通常BPM': baseBpm });
 
 // core の比較結果（summary）→ POST /api/logs の body
-export const toLogBody = (scenario, summary) => ({ 'シナリオ': scenario, '停止回数': summary.stops, '総所要時間': summary.totalTimeS });
+// 停止時間と早歩きの記録は、要約にあるときだけ送る（バックエンドは walkCount・walkTimeS・walkDistanceM を検証して受け取る。改善ループ c09m）
+export const toLogBody = (scenario, summary) => ({
+  'シナリオ': scenario, '停止回数': summary.stops, '総所要時間': summary.totalTimeS,
+  ...(summary.stopTimeS !== undefined ? { '停止時間': summary.stopTimeS } : {}),
+  ...(summary.walkCount !== undefined ? { walkCount: summary.walkCount, walkTimeS: summary.walkTimeS, walkDistanceM: summary.walkDistanceM } : {}),
+});

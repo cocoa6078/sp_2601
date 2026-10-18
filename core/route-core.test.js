@@ -255,6 +255,25 @@ test('route: compareRoute は { normal, runwave } と { off, on } の両方で�
   assert.equal(r.on, r.runwave);
 });
 
+test('横断長0の信号でも赤では止まり、次の信号を飛ばさない（改善ループ c03）', () => {
+  const sig = (phaseS, crossingM) => ({ cycleS: 100, greenS: 40, yellowS: 5, redS: 55, phaseS, crossingM });
+  for (const enabled of [false, true]) {
+    const c = { runner: { strideM: 0.8, baseBpm: 150 }, control: { enabled, startMarginS: 3, endMarginS: 5 }, goalM: 900,
+      signals: [{ id: 'zero', atM: 200, signal: sig(45, 0) }, { id: 'next', atM: 500, signal: sig(45, 15) }] };
+    const { state } = simulateRoute(c);
+    assert.equal(state.signalIndex, 2);
+    for (const id of ['zero', 'next']) {
+      const types = state.events.filter((e) => e.signalId === id).map((e) => e.type);
+      assert.ok(types.includes('crossStart') && types.includes('crossEnd'), `${enabled} ${id}: ${types}`);
+    }
+    for (const e of state.events) if (e.type === 'crossStart') assert.equal(e.color, 'green', `${enabled} ${e.signalId} t=${e.t}`);
+  }
+  // 通常走行は横断長0の信号（2m/s でちょうど赤の始まりに着く）で止まる
+  const off = simulateRoute({ runner: { strideM: 0.8, baseBpm: 150 }, control: { enabled: false }, goalM: 900,
+    signals: [{ id: 'zero', atM: 200, signal: sig(45, 0) }, { id: 'next', atM: 500, signal: sig(45, 15) }] }).state;
+  assert.ok(off.events.some((e) => e.signalId === 'zero' && e.type === 'waitStart'));
+});
+
 // ---------- 先読み ----------
 const shifted = (off, ph) => ({
   ...ROUTE, goalM: off + 1255 + 15 + 200,
@@ -268,14 +287,19 @@ test('route 先読み: 制御OFFでは計画を作らず、lookahead: false と�
   assert.deepEqual(result, simulateRoute({ ...c, lookahead: false }));
 });
 
-test('route 先読み: 連続する最善区間を広げた窓も試走して選べる', () => {
+test('route 先読み: 広げた窓や青の時間帯の端の候補も試走して選べる', () => {
   const c = shifted(100, 50);
   let s = createRouteRun(c);
   while (s.signalIndex === 0) s = stepRoute(s, c);
   const { window } = stepRoute(s, c).plan;
   assert.ok(window);
-  near(window.startT, 243.75);
-  near(window.endT, 246.599381);   // 隣の点までの拡張だと 245 秒までしか取れない
+  // 改善ループ c04b：選ばれる時間帯の数値は候補の作り方で変わるので、数値ではなく動きを確かめる
+  // （時間帯が選ばれ、2つ目の信号の青の中にあり、この経路では今の信号だけを見るより止まる回数が減る）
+  assert.ok(window.endT > window.startT);
+  const sig1 = c.signals[1].signal;
+  for (const t of [window.startT + 1e-6, window.endT - 1e-6]) assert.equal(signalAt(sig1, t).color, 'green', `t=${t}`);
+  assert.equal(simulateRoute(c).summary.stops, 0);
+  assert.equal(simulateRoute({ ...c, lookahead: false }).summary.stops, 1);
 });
 
 test('route 先読み: デモ5交差点では、今の信号だけを見るより止まる回数が減る（2回 → 0回）', () => {
@@ -285,18 +309,25 @@ test('route 先読み: デモ5交差点では、今の信号だけを見るよ�
   assert.equal(b.stops, 0);
 });
 
-test('route 先読み: 90経路で停止が増えず、窓の拡張前の停止合計160回を超えない', () => {
+test('route 先読み: 90経路で、合計では今の信号だけより大きく減り、経路ごとの悪化は小さい', () => {
+  // 改善ループ c07：停止推奨のときに走りの下限へ下げて近づくようになり、今の信号だけを見る走り方も良くなった（188→168回）。
+  // 先読みの試走は先の2信号までなので、その先の停止までは保証できず、経路によっては1回多く止まることがある。
+  // そこで「経路ごとに必ず悪くならない」をやめ、合計の大きな改善と、経路ごとの悪化の小ささを確かめる
   let stopsNow = 0, stopsAhead = 0;
+  const worse = [];
   for (let off = 100; off <= 500; off += 50) for (let ph = 0; ph < 100; ph += 10) {
     const c = shifted(off, ph);
     const a = simulateRoute({ ...c, lookahead: false }).summary, b = simulateRoute(c).summary;
     assert.ok(a.finished && b.finished);
-    assert.ok(b.stops <= a.stops, `${off}/${ph}: ${a.stops} → ${b.stops}`);
+    if (b.stops > a.stops) worse.push(`${off}/${ph}: ${a.stops} → ${b.stops}`);
+    assert.ok(b.stops <= a.stops + 1, `${off}/${ph}: ${a.stops} → ${b.stops}`);
     stopsNow += a.stops;
     stopsAhead += b.stops;
   }
-  assert.equal(stopsNow, 188);
-  assert.ok(stopsAhead <= 160, `先読みの停止合計: ${stopsAhead}`);
+  assert.equal(stopsNow, 167);   // 改善ループ c08b：最後の信号では、止まるのが避けられないとき早歩きで近づく（168→167）
+  assert.ok(stopsAhead <= 0.6 * stopsNow, `先読みの停止合計: ${stopsAhead}`);
+  // 改善ループ c18a：試走で「今の信号だけを見る」走り方も試すようになり、この90経路では今の信号だけより悪くなる経路が無くなった
+  assert.equal(worse.length, 0, `先読みで悪化した経路: ${worse.join(' ')}`);
 });
 
 test('route 先読み: RUNWAVE でも赤待ちが必要な経路では待つ（非青で横断に入らない）', () => {
