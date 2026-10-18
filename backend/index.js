@@ -24,7 +24,6 @@ function calculateDistanceM(lat1, lon1, lat2, lon2) {
   return R * c; // メートル単位
 }
 
-
 // ---------------------------------------------------------
 // 共通ヘルパー（DATA-02 品質項目 / DATA-04 英語キー）
 // ---------------------------------------------------------
@@ -53,17 +52,23 @@ function pickQuality(signal) {
   return { signalType, phaseBasis, phaseReference, phaseBasisNote, positionAccuracyM, fetchedAt, crossingDirection };
 }
 
-// 成功レスポンス: 日本語キーは残し、英語 status:"ok" を追加
+// 成功レスポンス: 日本語キーは残し、英語 status:"ok" と generatedAt を追加
 function sendOk(res, body, httpStatus = 200) {
-  return res.status(httpStatus).json({ ...body, status: "ok" });
+  return res.status(httpStatus).json({ 
+    ...body, 
+    status: "ok",
+    generatedAt: new Date().toISOString()
+  });
 }
+
 // エラーレスポンス: 日本語キー（ステータス/メッセージ）に加え status:"error" と error:{code,message}
 function sendError(res, httpStatus, code, message, jpStatus = "エラー") {
   return res.status(httpStatus).json({
     ステータス: jpStatus,
     メッセージ: message,
     status: "error",
-    error: { code, message }
+    error: { code, message },
+    generatedAt: new Date().toISOString()
   });
 }
 
@@ -120,7 +125,7 @@ try {
     console.log(`✅ 正確な座標データ(${scrapedData.length}件)のロード完了`);
   }
 
-  // 3. 全データをF-02フォーマットへ変換（スクレイピング座標を結合）
+  // 3. 全データをF-02フォーマットへ変換（スクレイピング座標を結合、品質項目付与）
   allSignalsDataF02 = allHokkaidoData.map(signal => {
     const greenS = Math.max(0, signal["青信号時間"] - 5); 
     const yellowS = 5;
@@ -339,6 +344,7 @@ app.get('/api/logs/:id', (req, res) => {
 app.get('/api/logs', (req, res) => {
   sendOk(res, { ステータス: "成功", データ: runLogs });
 });
+
 // ---------------------------------------------------------
 // セッション別案内中継データストア (D1 / B1)
 // ---------------------------------------------------------
@@ -355,13 +361,11 @@ app.put('/api/sessions/:sessionId/guidance', (req, res) => {
     return sendError(res, 400, "INVALID_INPUT", "guidanceSeq（数値）は必須です。");
   }
 
-  // 古い書き込み・順序逆転の拒否 (guidanceSeq 比較)
   const existing = sessionGuidanceStore.get(sessionId);
   if (existing && existing.guidanceSeq >= guidanceSeq) {
     return sendError(res, 409, "CONFLICT", `古い更新番号です。(現在: ${existing.guidanceSeq}, 送信: ${guidanceSeq})`, "競合");
   }
 
-  // 小数点ケイデンスを保持したオブジェクト構築
   const guidanceData = {
     sessionId,
     configVersion: configVersion ?? 1,
@@ -402,6 +406,10 @@ app.get('/api/sessions/:sessionId/guidance', (req, res) => {
     データ: guidanceData
   });
 });
+
+// ---------------------------------------------------------
+// 経路上の信号抽出 (POST /api/signals/along-route)
+// ---------------------------------------------------------
 function projectPointToSegment(pLat, pLon, aLat, aLon, bLat, bLon) {
   const R = 6371e3;
   const toRad = (deg) => (deg * Math.PI) / 180;
@@ -430,10 +438,6 @@ function projectPointToSegment(pLat, pLon, aLat, aLon, bLat, bLon) {
   return { distM: R * Math.sqrt(dLat * dLat + dLon * dLon), t };
 }
 
-function calculatePointToSegmentDistanceM(...args) {
-  return projectPointToSegment(...args).distM;
-}
-
 const alongRouteRateLimits = new Map();
 
 app.post('/api/signals/along-route', (req, res) => {
@@ -448,10 +452,7 @@ app.post('/api/signals/along-route', (req, res) => {
   }
   rateRecord.count++;
   if (rateRecord.count > 30) {
-    return res.status(429).json({
-      status: "error",
-      error: { code: "RATE_LIMITED", message: "Too many requests. Please try again later.", retryable: true }
-    });
+    return sendError(res, 429, "RATE_LIMITED", "Too many requests. Please try again later.");
   }
 
   const body = req.body ?? {};
@@ -459,23 +460,14 @@ app.post('/api/signals/along-route', (req, res) => {
   const corridorM = Number(body.corridorM) || 30;
 
   if (!route || route.type !== 'LineString' || !Array.isArray(route.coordinates)) {
-    return res.status(400).json({
-      status: "error",
-      error: { code: "INVALID_ROUTE_GEOMETRY", message: "GeoJSON LineString format is required.", retryable: false }
-    });
+    return sendError(res, 400, "INVALID_INPUT", "GeoJSON LineString format is required.");
   }
   if (route.coordinates.length < 2 || route.coordinates.length > 1000) {
-    return res.status(400).json({
-      status: "error",
-      error: { code: "INVALID_ROUTE_GEOMETRY", message: "Coordinate points must be between 2 and 1000.", retryable: false }
-    });
+    return sendError(res, 400, "INVALID_INPUT", "Coordinate points must be between 2 and 1000.");
   }
 
   if (!allSignalsDataF02 || allSignalsDataF02.length === 0) {
-    return res.status(503).json({
-      status: "error",
-      error: { code: "SIGNAL_DATA_UNAVAILABLE", message: "Signal database is not loaded.", retryable: true }
-    });
+    return sendError(res, 503, "INTERNAL_ERROR", "Signal database is not loaded.");
   }
 
   const matches = [];
@@ -492,7 +484,7 @@ app.post('/api/signals/along-route', (req, res) => {
       continue;
     }
 
-    // 全区間を調べ、最短距離の区間を採用（alongRouteM = 区間始点までの累積 + 区間内の射影位置）
+    // 全区間を調べ、最短距離の区間を採用
     let best = null;
     for (let i = 0; i < coords.length - 1; i++) {
       const lonA = coords[i][0], latA = coords[i][1];
@@ -523,8 +515,6 @@ app.post('/api/signals/along-route', (req, res) => {
         headingDeg: null,
         approachDirection: null,
         matchQuality: "position-only",
-        quality: signal.phaseBasis, // 旧項目。phaseBasis と同値
-        source: "JARTIC-derived signal split; coordinates from source/scrape",
         ...pickQuality(signal),
         isEstimated: signal.isEstimated,
         note: signal.note || "※車両用信号のスプリット由来の推定値です。"
@@ -534,9 +524,7 @@ app.post('/api/signals/along-route', (req, res) => {
 
   matches.sort((m1, m2) => m1.alongRouteM - m2.alongRouteM);
 
-  return res.status(200).json({
-    status: "ok",
-    generatedAt: new Date().toISOString(),
+  return sendOk(res, {
     schemaVersion: 1,
     dataVersion: "hokkaido-signals-2026-10",
     coverage: { region: "hokkaido", complete: false },
@@ -547,6 +535,7 @@ app.post('/api/signals/along-route', (req, res) => {
     ]
   });
 });
+
 // ---------------------------------------------------------
 // 3. エラーハンドリング (必ずルート定義の最後に配置)
 // ---------------------------------------------------------
